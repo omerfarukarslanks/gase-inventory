@@ -18,6 +18,7 @@ import { SalesModule } from './sales/sales.module';
 import { ReportsModule } from './reports/reports.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { StockTransferModule } from './transfer/stock-transfer.module';
+import { join } from 'path';
 import { PriceModule } from './pricing/price.module';
 
 @Module({
@@ -36,13 +37,14 @@ import { PriceModule } from './pricing/price.module';
         username: config.get<string>('DB_USER'),
         password: config.get<string>('DB_PASS'),
         database: config.get<string>('DB_NAME'),
-        autoLoadEntities: true,      // Entity'leri otomatik yükle
-        synchronize: true,           // Geliştirme ortamında otomatik schema create/update
-        // production'da synchronize: false tercih edilmeli, migration kullanılmalı
-      })
+        autoLoadEntities: true, // Entity'leri otomatik yükle
+        synchronize: false,
+        migrations: [join(__dirname, 'migrations/*.js')],
+        migrationsTableName: 'typeorm_migrations',
+      }),
     }),
-    
-     // 🔹 CLS – tüm uygulama için global context
+
+    // 🔹 CLS – tüm uygulama için global context
     ClsModule.forRoot({
       global: true,
       middleware: {
