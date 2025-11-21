@@ -44,6 +44,16 @@ $ npm run start:dev
 $ npm run start:prod
 ```
 
+## Database migrations
+
+Configure your database connection variables (`DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASS`, `DB_NAME`) and run pending migrations with:
+
+```bash
+$ npm run typeorm -- migration:run
+```
+
+Add the migration command to your CI/CD pipeline before the application starts to ensure the deployed database schema stays in sync.
+
 ## Run tests
 
 ```bash
