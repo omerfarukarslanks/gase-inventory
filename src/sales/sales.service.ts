@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { Sale, SaleStatus } from './sale.entity';
 import { SaleLine } from './sale-line.entity';
@@ -108,17 +108,29 @@ export class SalesService {
 
     const store = await this.getTenantStoreOrThrow(dto.storeId, manager);
 
-    // Varyant cache
-    const variantMap = new Map<string, ProductVariant>();
-    for (const line of dto.lines) {
-      if (!variantMap.has(line.productVariantId)) {
-        const v = await this.getTenantVariantOrThrow(
-          line.productVariantId,
-          manager,
-        );
-        variantMap.set(line.productVariantId, v);
-      }
+    const variantIds = [...new Set(dto.lines.map((line) => line.productVariantId))];
+
+    const variants = await manager.getRepository(ProductVariant).find({
+      where: {
+        id: In(variantIds),
+        product: { tenant: { id: tenantId } },
+      },
+      relations: ['product', 'product.tenant'],
+    });
+
+    if (variants.length !== variantIds.length) {
+      throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
     }
+
+    const variantMap = new Map<string, ProductVariant>(
+      variants.map((variant) => [variant.id, variant]),
+    );
+
+    const effectivePrices = await this.priceService.getEffectiveSaleParamsForStoreBulk(
+      store.id,
+      variantIds,
+      manager,
+    );
 
     // 1) Sale kaydı
     const sale = saleRepo.create({
@@ -147,32 +159,26 @@ export class SalesService {
       const variant = variantMap.get(lineDto.productVariantId)!;
 
       // 🔹 1) PriceService ile mağaza bazlı efektif parametreleri al
-    if (lineDto.unitPrice == null) {
-      const priceParams =
-        await this.priceService.getEffectiveSaleParamsForStore(
-          store.id,
-          lineDto.productVariantId,
-          manager,
-        );
+      if (lineDto.unitPrice == null) {
+        const priceParams = effectivePrices.get(lineDto.productVariantId);
 
-      lineDto.unitPrice = priceParams.unitPrice ?? 0;
+        lineDto.unitPrice = priceParams?.unitPrice ?? 0;
 
-      if (lineDto.taxPercent == null && priceParams.taxPercent != null) {
-        lineDto.taxPercent = priceParams.taxPercent;
+        if (lineDto.taxPercent == null && priceParams?.taxPercent != null) {
+          lineDto.taxPercent = priceParams.taxPercent;
+        }
+
+        if (
+          lineDto.discountPercent == null &&
+          priceParams?.discountPercent != null
+        ) {
+          lineDto.discountPercent = priceParams.discountPercent;
+        }
+
+        if (!lineDto.currency && priceParams?.currency) {
+          lineDto.currency = priceParams.currency;
+        }
       }
-
-      if (
-        lineDto.discountPercent == null &&
-        priceParams.discountPercent != null
-      ) {
-        lineDto.discountPercent = priceParams.discountPercent;
-      }
-
-      // Currency’yi de doldurmak istersen:
-      if (!lineDto.currency) {
-        lineDto.currency = priceParams.currency;
-      }
-    }
 
       const {
         net,
