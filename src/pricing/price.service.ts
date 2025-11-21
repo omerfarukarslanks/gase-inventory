@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, EntityManager } from 'typeorm';
+import { Repository, EntityManager, In } from 'typeorm';
 
 import { StoreProductPrice } from './store-product-price.entity';
 import { ProductVariant } from '../product/product-variant.entity';
@@ -104,6 +104,108 @@ export class PriceService {
       discountPercent: null, // tenant level default indirim yok varsayalım
       isStoreOverride: false,
     };
+  }
+
+  async getEffectiveSaleParamsForStoreBulk(
+    storeId: string,
+    productVariantIds: string[],
+    manager?: EntityManager,
+  ): Promise<
+    Map<
+      string,
+      {
+        unitPrice: number | null;
+        currency: string;
+        taxPercent: number | null;
+        discountPercent: number | null;
+        isStoreOverride: boolean;
+      }
+    >
+  > {
+    const tenantId = this.getTenantIdOrThrow();
+
+    if (productVariantIds.length === 0) {
+      return new Map();
+    }
+
+    const variantRepo: Repository<ProductVariant> = manager
+      ? manager.getRepository<ProductVariant>(ProductVariant)
+      : this.variantRepo;
+
+    const sppRepo: Repository<StoreProductPrice> = manager
+      ? manager.getRepository<StoreProductPrice>(StoreProductPrice)
+      : this.sppRepo;
+
+    const variants = await variantRepo.find({
+      where: {
+        id: In(productVariantIds),
+        product: { tenant: { id: tenantId } },
+      },
+      relations: ['product', 'product.tenant'],
+    });
+
+    if (variants.length !== new Set(productVariantIds).size) {
+      throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
+    }
+
+    const storePrices = await sppRepo.find({
+      where: {
+        tenant: { id: tenantId },
+        store: { id: storeId },
+        productVariant: { id: In(productVariantIds) },
+        isActive: true,
+      },
+      relations: ['productVariant'],
+    });
+
+    const result = new Map<
+      string,
+      {
+        unitPrice: number | null;
+        currency: string;
+        taxPercent: number | null;
+        discountPercent: number | null;
+        isStoreOverride: boolean;
+      }
+    >();
+
+    for (const variant of variants) {
+      const storePrice = storePrices.find(
+        (sp) => sp.productVariant.id === variant.id,
+      );
+
+      if (storePrice) {
+        result.set(variant.id, {
+          unitPrice:
+            storePrice.salePrice != null
+              ? Number(storePrice.salePrice)
+              : variant.defaultSalePrice ?? null,
+          currency:
+            storePrice.currency ??
+            variant.defaultCurrency ??
+            'TRY',
+          taxPercent:
+            storePrice.taxPercent != null
+              ? Number(storePrice.taxPercent)
+              : variant.defaultTaxPercent ?? null,
+          discountPercent:
+            storePrice.discountPercent != null
+              ? Number(storePrice.discountPercent)
+              : null,
+          isStoreOverride: true,
+        });
+      } else {
+        result.set(variant.id, {
+          unitPrice: variant.defaultSalePrice ?? null,
+          currency: variant.defaultCurrency ?? 'TRY',
+          taxPercent: variant.defaultTaxPercent ?? null,
+          discountPercent: null,
+          isStoreOverride: false,
+        });
+      }
+    }
+
+    return result;
   }
 
   /**
