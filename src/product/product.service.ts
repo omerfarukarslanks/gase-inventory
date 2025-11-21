@@ -1,0 +1,121 @@
+import {
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+
+import { Product } from './product.entity';
+import { ProductVariant } from './product-variant.entity';
+import { CreateProductDto } from './dto/create-product.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateVariantDto } from './dto/create-variant.dto';
+import { AppContextService } from 'src/common/context/app-context.service';
+import { ProductErrors } from 'src/common/errors/product.errors';
+
+@Injectable()
+export class ProductService {
+  constructor(
+    @InjectRepository(Product)
+    private readonly productRepo: Repository<Product>,
+    @InjectRepository(ProductVariant)
+    private readonly variantRepo: Repository<ProductVariant>,
+    private readonly appContext: AppContextService,
+    private readonly dataSource: DataSource, 
+  ) {}
+
+  async createProduct(dto: CreateProductDto, manager?: EntityManager): Promise<Product> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const repo = manager ? manager.getRepository(Product) : this.productRepo;
+
+    const product = repo.create({
+      ...dto,
+      tenant: { id: tenantId } as any, // relation by id
+      defaultCurrency: dto.defaultCurrency ?? 'TRY',
+      createdById: userId,
+      updatedById: userId,
+    });
+
+    return repo.save(product);
+  }
+
+  async findAll(manager?: EntityManager): Promise<Product[]> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const repo = manager ? manager.getRepository(Product) : this.productRepo;
+
+    return repo.find({
+      where: {
+        tenant: { id: tenantId },
+      },
+      order: { createdAt: 'DESC' },
+      relations: ['variants'],
+    });
+  }
+
+  async findOne(id: string, manager?: EntityManager): Promise<Product> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const repo = manager ? manager.getRepository(Product) : this.productRepo;
+
+    const product = await repo.findOne({
+      where: { id, tenant: { id: tenantId } },
+      relations: ['variants'],
+    });
+
+    if (!product) {
+      throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
+    }
+
+    return product;
+  }
+
+  async update(id: string, dto: UpdateProductDto, manager?: EntityManager): Promise<Product> {
+    const product = await this.findOne(id, manager); // tenant filter dahil
+    const userId = this.appContext.getUserIdOrThrow();
+    const repo = manager ? manager.getRepository(Product) : this.productRepo;
+
+    Object.assign(product, dto, {
+      updatedById: userId,
+    });
+    return repo.save(product);
+  }
+
+  async remove(id: string, manager?: EntityManager): Promise<void> {
+    const product = await this.findOne(id, manager);
+    await (manager ? manager.getRepository(Product) : this.productRepo).remove(product);
+  }
+
+  // ---------- Variant işlemleri ----------
+
+  async addVariant(
+    productId: string,
+    dto: CreateVariantDto,
+  ): Promise<ProductVariant> {
+    return this.dataSource.transaction(async (manager) => {
+
+      const variantRepo = manager.getRepository(ProductVariant);
+      const product = await this.findOne(productId, manager); // tenant filter dahil
+
+      const variant = variantRepo.create({
+        ...dto,
+        product,
+      });
+      return variantRepo.save(variant);
+    });
+  }
+
+  async listVariants(productId: string): Promise<ProductVariant[]> {
+    const product = await this.findOne(productId); // tenant filter dahil
+    const variant = this.variantRepo.find({
+      where: { product: { id: product.id } },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!variant) {
+      throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
+    }
+
+    return variant;
+  }
+}
