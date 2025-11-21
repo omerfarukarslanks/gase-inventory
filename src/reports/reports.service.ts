@@ -3,19 +3,19 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository, Between, In } from 'typeorm';
 
 import { AppContextService } from '../common/context/app-context.service';
-import { InventoryMovement } from '../inventory/inventory-movement.entity';
 import { Sale } from '../sales/sale.entity';
 import { SaleStatus } from '../sales/sale.entity';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { ReportsErrors } from 'src/common/errors/report.errors';
+import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 
 @Injectable()
 export class ReportsService {
   constructor(
-    @InjectRepository(InventoryMovement)
-    private readonly movementRepo: Repository<InventoryMovement>,
+    @InjectRepository(StoreVariantStock)
+    private readonly stockSummaryRepo: Repository<StoreVariantStock>,
     @InjectRepository(Store)
     private readonly storeRepo: Repository<Store>,
     @InjectRepository(Sale)
@@ -45,13 +45,12 @@ export class ReportsService {
     await this.ensureStoreOfTenant(storeId);
 
     // variant bazlı stok toplamı
-    const rows = await this.movementRepo
-      .createQueryBuilder('m')
-      .select('m.productVariantId', 'productVariantId')
-      .addSelect('COALESCE(SUM(m.quantity), 0)', 'quantity')
-      .where('m.tenantId = :tenantId', { tenantId })
-      .andWhere('m.storeId = :storeId', { storeId })
-      .groupBy('m.productVariantId')
+    const rows = await this.stockSummaryRepo
+      .createQueryBuilder('s')
+      .select('s.productVariantId', 'productVariantId')
+      .addSelect('s.quantity', 'quantity')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.storeId = :storeId', { storeId })
       .getRawMany<{ productVariantId: string; quantity: string }>();
 
     if (rows.length === 0) return [];
