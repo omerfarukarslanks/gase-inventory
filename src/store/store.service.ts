@@ -1,6 +1,6 @@
-import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DeepPartial, EntityManager, Repository } from 'typeorm';
+import { EntityManager, Repository } from 'typeorm';
 import { Store } from './store.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
 import { AppContextService } from 'src/common/context/app-context.service';
@@ -16,12 +16,16 @@ export class StoresService {
   ) {}
 
   async createDefaultStoreForTenant(tenant: Tenant, name = 'Merkez Mağaza', manager?: EntityManager) {
-    const userId =this.appContext.getUserIdOrNull();
+    const userId = this.appContext.getUserIdOrNull();
     const repo = manager ? manager.getRepository(Store) : this.storeRepo;
+    const slug = slugify(name);
+
+    await this.ensureSlugAvailable(slug, tenant.id, manager);
+
     const store = repo.create({
       tenant,
       name,
-      slug: slugify(name),
+      slug,
       code: 'MAIN',
       ...(userId && {
         createdById: userId,
@@ -55,5 +59,19 @@ export class StoresService {
     }
 
     return store;
+  }
+
+  async ensureSlugAvailable(slug: string, tenantId: string, manager?: EntityManager) {
+    const repo: Repository<Store> = manager ? manager.getRepository(Store) : this.storeRepo;
+    const exists = await repo.exists({
+      where: {
+        slug,
+        tenant: { id: tenantId },
+      },
+    });
+
+    if (exists) {
+      throw new ConflictException(StoreErrors.STORE_SLUG_IN_USE);
+    }
   }
 }

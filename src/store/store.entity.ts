@@ -1,9 +1,10 @@
-import { AuditableEntity } from "src/common/entity/auditable-base.entity";
-import { Tenant } from "src/tenant/tenant.entity";
-import { UserStore } from "src/user/user-store.entity";
-import { Column, CreateDateColumn, Entity, ManyToOne, OneToMany, PrimaryGeneratedColumn, UpdateDateColumn } from "typeorm";
+import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
+import { Tenant } from 'src/tenant/tenant.entity';
+import { UserStore } from 'src/user/user-store.entity';
+import { Column, Entity, ManyToOne, OneToMany, Unique } from 'typeorm';
 
 @Entity()
+@Unique(['tenant', 'slug'])
 export class Store extends AuditableEntity {
   @ManyToOne(() => Tenant, (tenant) => tenant.stores, { eager: true })
   tenant: Tenant;
@@ -20,7 +21,7 @@ export class Store extends AuditableEntity {
   @Column({ default: true })
   isActive: boolean;
 
-  @Column({ unique: true })
+  @Column({ nullable: true })
   slug?: string; // Kısa kod (URL, subdomain vs. için)
 
   @Column({ nullable: true })
