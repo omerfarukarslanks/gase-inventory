@@ -16,7 +16,9 @@ async function bootstrap() {
   );
 
   const dataSource = app.get(DataSource);
-  await dataSource.runMigrations();
+  if (process.env.NODE_ENV !== 'production') {
+    await dataSource.runMigrations();
+  }
 
   // ---- Swagger config ----
   const config = new DocumentBuilder()
