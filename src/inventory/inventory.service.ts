@@ -16,6 +16,8 @@ import { ProductVariant } from 'src/product/product-variant.entity';
 import { SellStockDto } from './dto/sell-stock.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { InventoryErrors } from 'src/common/errors/inventory.errors';
+import { StoreVariantStock } from './store-variant-stock.entity';
+import { Tenant } from 'src/tenant/tenant.entity';
 
 @Injectable()
 export class InventoryService {
@@ -24,6 +26,8 @@ export class InventoryService {
   constructor(
     @InjectRepository(InventoryMovement)
     private readonly movementRepo: Repository<InventoryMovement>,
+    @InjectRepository(StoreVariantStock)
+    private readonly stockSummaryRepo: Repository<StoreVariantStock>,
     @InjectRepository(Store)
     private readonly storeRepo: Repository<Store>,
     @InjectRepository(ProductVariant)
@@ -91,6 +95,101 @@ export class InventoryService {
     return variant;
   }
 
+  private getStockSummaryRepository(manager?: EntityManager) {
+    return manager
+      ? manager.getRepository(StoreVariantStock)
+      : this.stockSummaryRepo;
+  }
+
+  private async calculateMovementSum(
+    tenantId: string,
+    storeId: string,
+    variantId: string,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const repo = manager ? manager.getRepository(InventoryMovement) : this.movementRepo;
+
+    const row = await repo
+      .createQueryBuilder('m')
+      .select('COALESCE(SUM(m.quantity), 0)', 'sum')
+      .where('m.tenantId = :tenantId', { tenantId })
+      .andWhere('m.storeId = :storeId', { storeId })
+      .andWhere('m.productVariantId = :variantId', { variantId })
+      .getRawOne<{ sum: string | null }>();
+
+    const sum = row?.sum ?? '0';
+
+    return Number(sum);
+  }
+
+  private async ensureStoreVariantStock(
+    tenantId: string,
+    storeId: string,
+    variantId: string,
+    manager?: EntityManager,
+    lock = false,
+  ): Promise<StoreVariantStock> {
+    const repo = this.getStockSummaryRepository(manager);
+
+    const qb = repo
+      .createQueryBuilder('s')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.storeId = :storeId', { storeId })
+      .andWhere('s.productVariantId = :variantId', { variantId });
+
+    if (lock) {
+      qb.setLock('pessimistic_write');
+    }
+
+    let summary = await qb.getOne();
+
+    if (!summary) {
+      const quantity = await this.calculateMovementSum(
+        tenantId,
+        storeId,
+        variantId,
+        manager,
+      );
+
+      const userId = this.getUserIdOrThrow();
+
+      summary = repo.create({
+        tenant: { id: tenantId } as Tenant,
+        store: { id: storeId } as Store,
+        productVariant: { id: variantId } as ProductVariant,
+        quantity,
+        createdById: userId,
+        updatedById: userId,
+      });
+
+      summary = await repo.save(summary);
+    }
+
+    return summary;
+  }
+
+  private async applyMovementToStockSummary(
+    tenantId: string,
+    storeId: string,
+    variantId: string,
+    quantityDelta: number,
+    manager?: EntityManager,
+  ): Promise<StoreVariantStock> {
+    const repo = this.getStockSummaryRepository(manager);
+    const summary = await this.ensureStoreVariantStock(
+      tenantId,
+      storeId,
+      variantId,
+      manager,
+      true,
+    );
+
+    summary.quantity = Number(summary.quantity) + quantityDelta;
+    summary.updatedById = this.getUserIdOrThrow();
+
+    return repo.save(summary);
+  }
+
   // ---- Hareket yazma helper'ı ----
 
   private async createMovement(
@@ -149,7 +248,17 @@ export class InventoryService {
       updatedById: userId,
     });
 
-    return repo.save(movement);
+    const savedMovement = await repo.save(movement);
+
+    await this.applyMovementToStockSummary(
+      params.tenantId,
+      params.store.id,
+      params.variant.id,
+      params.quantity,
+      manager,
+    );
+
+    return savedMovement;
   }
 
   private async getLockedStockForVariantInStore(
@@ -159,20 +268,15 @@ export class InventoryService {
   ): Promise<number> {
     const tenantId = this.getTenantIdOrThrow();
 
-    const repo = manager.getRepository(InventoryMovement);
+    const summary = await this.ensureStoreVariantStock(
+      tenantId,
+      storeId,
+      variantId,
+      manager,
+      true,
+    );
 
-    const row = await repo
-      .createQueryBuilder('m')
-      .select('COALESCE(SUM(m.quantity), 0)', 'sum')
-      .where('m.tenantId = :tenantId', { tenantId })
-      .andWhere('m.storeId = :storeId', { storeId })
-      .andWhere('m.productVariantId = :variantId', { variantId })
-      .setLock('pessimistic_write')
-      .getRawOne<{ sum: string | null }>();
-
-    const sum = row?.sum ?? '0';
-
-    return Number(sum);
+    return Number(summary.quantity);
   }
 
   /**
@@ -481,19 +585,14 @@ export class InventoryService {
     await this.getTenantStoreOrThrow(storeId, manager);
     await this.getTenantVariantOrThrow(variantId, manager);
 
-    const repo = manager ? manager.getRepository(InventoryMovement) : this.movementRepo;
+    const summary = await this.ensureStoreVariantStock(
+      tenantId,
+      storeId,
+      variantId,
+      manager,
+    );
 
-    const row = await repo
-      .createQueryBuilder('m')
-      .select('COALESCE(SUM(m.quantity), 0)', 'sum')
-      .where('m.tenantId = :tenantId', { tenantId })
-      .andWhere('m.storeId = :storeId', { storeId })
-      .andWhere('m.productVariantId = :variantId', { variantId })
-      .getRawOne<{ sum: string | null }>();
-
-    const sum = row?.sum ?? '0';
-
-    return Number(sum);
+    return Number(summary.quantity);
   }
 
   /**
@@ -508,15 +607,14 @@ export class InventoryService {
   > {
     const tenantId = this.getTenantIdOrThrow();
     await this.getTenantStoreOrThrow(storeId, manager);
-    const repo = manager ? manager.getRepository(InventoryMovement) : this.movementRepo;
+    const repo = this.getStockSummaryRepository(manager);
 
     const rows = await repo
-      .createQueryBuilder('m')
-      .select('m.productVariantId', 'productVariantId')
-      .addSelect('COALESCE(SUM(m.quantity), 0)', 'quantity')
-      .where('m.tenantId = :tenantId', { tenantId })
-      .andWhere('m.storeId = :storeId', { storeId })
-      .groupBy('m.productVariantId')
+      .createQueryBuilder('s')
+      .select('s.productVariantId', 'productVariantId')
+      .addSelect('s.quantity', 'quantity')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.storeId = :storeId', { storeId })
       .getRawMany<{ productVariantId: string; quantity: string }>();
 
     return rows.map((r) => ({
@@ -540,16 +638,14 @@ export class InventoryService {
   > {
     const tenantId = this.getTenantIdOrThrow();
 
-    const repo: Repository<InventoryMovement> = manager
-      ? manager.getRepository<InventoryMovement>(InventoryMovement)
-      : this.movementRepo;
+    const repo = this.getStockSummaryRepository(manager);
 
     const rows = await repo
-      .createQueryBuilder('m')
-      .select('m.productVariantId', 'productVariantId')
-      .addSelect('COALESCE(SUM(m.quantity), 0)', 'quantity')
-      .where('m.tenantId = :tenantId', { tenantId })
-      .groupBy('m.productVariantId')
+      .createQueryBuilder('s')
+      .select('s.productVariantId', 'productVariantId')
+      .addSelect('COALESCE(SUM(s.quantity), 0)', 'quantity')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .groupBy('s.productVariantId')
       .getRawMany<{ productVariantId: string; quantity: string }>();
 
     return rows.map((r) => ({
@@ -559,41 +655,36 @@ export class InventoryService {
   }
 
   /**
- * Bir ürün varyantının, tenant içindeki tüm mağazalarda
- * ne kadar stoğu olduğunu döner.
- *
- * Çıktı örneği:
- * [
- *   { storeId: '...', quantity: 10 },
- *   { storeId: '...', quantity: 25 },
- * ]
- */
-async getVariantStockByStore(
-  productVariantId: string,
-  manager?: EntityManager,
-): Promise<{ storeId: string; quantity: number }[]> {
-  const tenantId = this.getTenantIdOrThrow();
+   * Bir ürün varyantının, tenant içindeki tüm mağazalarda
+   * ne kadar stoğu olduğunu döner.
+   *
+   * Çıktı örneği:
+   * [
+   *   { storeId: '...', quantity: 10 },
+   *   { storeId: '...', quantity: 25 },
+   * ]
+   */
+  async getVariantStockByStore(
+    productVariantId: string,
+    manager?: EntityManager,
+  ): Promise<{ storeId: string; quantity: number }[]> {
+    const tenantId = this.getTenantIdOrThrow();
 
-  await this.getTenantVariantOrThrow(productVariantId, manager);
+    await this.getTenantVariantOrThrow(productVariantId, manager);
 
-  const repo: Repository<InventoryMovement> = manager
-    ? manager.getRepository<InventoryMovement>(InventoryMovement)
-    : this.movementRepo;
+    const repo = this.getStockSummaryRepository(manager);
 
-  const rows = await repo
-    .createQueryBuilder('m')
-    .select('m.storeId', 'storeId')
-    .addSelect('COALESCE(SUM(m.quantity), 0)', 'quantity')
-    .where('m.tenantId = :tenantId', { tenantId })
-    .andWhere('m.productVariantId = :variantId', { variantId: productVariantId })
-    .groupBy('m.storeId')
-    .getRawMany<{ storeId: string; quantity: string }>();
+    const rows = await repo
+      .createQueryBuilder('s')
+      .select('s.storeId', 'storeId')
+      .addSelect('s.quantity', 'quantity')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.productVariantId = :variantId', { variantId: productVariantId })
+      .getRawMany<{ storeId: string; quantity: string }>();
 
-  return rows.map((r) => ({
-    storeId: r.storeId,
-    quantity: Number(r.quantity),
-  }));
-}
-
-
+    return rows.map((r) => ({
+      storeId: r.storeId,
+      quantity: Number(r.quantity),
+    }));
+  }
 }

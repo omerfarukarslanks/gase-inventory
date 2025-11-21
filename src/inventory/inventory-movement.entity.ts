@@ -7,6 +7,7 @@ import { Tenant } from 'src/tenant/tenant.entity';
 import {
   Column,
   Entity,
+  Index,
   ManyToOne,
 } from 'typeorm';
 
@@ -19,6 +20,12 @@ export enum MovementType {
 }
 
 @Entity({ name: 'inventory_movements' })
+@Index('idx_inventory_movement_tenant_store_variant', [
+  'tenant',
+  'store',
+  'productVariant',
+])
+@Index('idx_inventory_movement_tenant_variant', ['tenant', 'productVariant'])
 export class InventoryMovement extends AuditableEntity {
   @ManyToOne(() => Tenant, { eager: true })
   tenant: Tenant;
