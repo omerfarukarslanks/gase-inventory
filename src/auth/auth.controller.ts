@@ -3,6 +3,7 @@ import { AuthService } from './auth.service';
 import { LocalAuthGuard } from './local-auth.guard';
 import { UsersService } from 'src/user/user.service';
 import { SignupTenantDto } from './dto/signup-tenant.dto';
+import { LoginRateLimitGuard } from './login-rate-limit.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -17,7 +18,7 @@ export class AuthController {
     return this.authService.login(user); // ilk kayıt sonrası direkt login
   }
 
-  @UseGuards(LocalAuthGuard)
+  @UseGuards(LoginRateLimitGuard, LocalAuthGuard)
   @Post('login')
   async login(@Request() req: any) {
     return this.authService.login(req.user);
