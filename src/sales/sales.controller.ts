@@ -13,6 +13,7 @@ import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
 import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
 import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
+import { ListSalesForStoreQueryDto } from './dto/list-sales.dto';
 
 @ApiTags('Sales')
 @ApiBearerAuth('access-token') // DocumentBuilder içindeki key
@@ -35,9 +36,8 @@ export class SalesController {
 
   @Get()
   @ApiOperation({ summary: 'Belirli bir mağaza için satış fişlerini getir' })
-  getSalesForStore(@Query('storeId') storeId: string) {
-    // ?storeId=... zorunlu tutabilirsin, veya opsiyonel yapıp tüm store'lar için listeleyebilirsin
-    return this.salesService.findAllForStore(storeId);
+  getSalesForStore(@Query() query: ListSalesForStoreQueryDto) {
+    return this.salesService.findAllForStore(query);
   }
 
   @Post(':id/cancel')
