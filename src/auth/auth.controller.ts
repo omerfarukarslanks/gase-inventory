@@ -1,22 +1,8 @@
-import {
-  Body,
-  Controller,
-  Post,
-  Request,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Post, Request, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { LocalAuthGuard } from './local-auth.guard';
 import { UsersService } from 'src/user/user.service';
-
-class SignupTenantDto {
-  tenantName: string;
-  tenantSlug: string;
-  email: string;
-  password: string;
-  name: string;
-  surname: string;
-}
+import { SignupTenantDto } from './dto/signup-tenant.dto';
 
 @Controller('auth')
 export class AuthController {
