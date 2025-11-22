@@ -56,4 +56,7 @@ export class Product extends AuditableEntity {
 
   @OneToMany(() => ProductVariant, (variant) => variant.product)
   variants: ProductVariant[];
+
+  // Relation count mapping için alan (DB sütunu değil)
+  variantCount?: number;
 }

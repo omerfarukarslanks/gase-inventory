@@ -1,7 +1,6 @@
 import {
   Injectable,
   NotFoundException,
-  UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
@@ -13,6 +12,10 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateVariantDto } from './dto/create-variant.dto';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { ProductErrors } from 'src/common/errors/product.errors';
+import {
+  ListProductsQueryDto,
+  PaginatedProductsResponse,
+} from './dto/list-products.dto';
 
 @Injectable()
 export class ProductService {
@@ -41,27 +44,81 @@ export class ProductService {
     return repo.save(product);
   }
 
-  async findAll(manager?: EntityManager): Promise<Product[]> {
+  async findAll(
+    query: ListProductsQueryDto,
+    manager?: EntityManager,
+  ): Promise<PaginatedProductsResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const repo = manager ? manager.getRepository(Product) : this.productRepo;
 
-    return repo.find({
-      where: {
-        tenant: { id: tenantId },
+    const qb = repo
+      .createQueryBuilder('product')
+      .select([
+        'product.id',
+        'product.name',
+        'product.sku',
+        'product.description',
+        'product.defaultBarcode',
+        'product.image',
+        'product.defaultCurrency',
+        'product.defaultSalePrice',
+        'product.defaultPurchasePrice',
+        'product.defaultTaxPercent',
+        'product.isActive',
+        'product.createdAt',
+        'product.updatedAt',
+      ])
+      .where('product.tenantId = :tenantId', { tenantId })
+      .orderBy('product.createdAt', 'DESC')
+      .skip(query.offset)
+      .take(query.limit)
+      .loadRelationCountAndMap('product.variantCount', 'product.variants');
+
+    if (query.cursor) {
+      qb.andWhere('product.createdAt < :cursor', {
+        cursor: new Date(query.cursor),
+      });
+    }
+
+    const [products, total] = await qb.getManyAndCount();
+
+    return {
+      data: products,
+      meta: {
+        total,
+        limit: query.limit,
+        offset: query.offset,
+        hasMore: query.offset + products.length < total,
+        cursor: query.cursor,
       },
-      order: { createdAt: 'DESC' },
-      relations: ['variants'],
-    });
+    };
   }
 
   async findOne(id: string, manager?: EntityManager): Promise<Product> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const repo = manager ? manager.getRepository(Product) : this.productRepo;
 
-    const product = await repo.findOne({
-      where: { id, tenant: { id: tenantId } },
-      relations: ['variants'],
-    });
+    const product = await repo
+      .createQueryBuilder('product')
+      .select([
+        'product.id',
+        'product.name',
+        'product.sku',
+        'product.description',
+        'product.defaultBarcode',
+        'product.image',
+        'product.defaultCurrency',
+        'product.defaultSalePrice',
+        'product.defaultPurchasePrice',
+        'product.defaultTaxPercent',
+        'product.isActive',
+        'product.createdAt',
+        'product.updatedAt',
+      ])
+      .where('product.id = :id', { id })
+      .andWhere('product.tenantId = :tenantId', { tenantId })
+      .loadRelationCountAndMap('product.variantCount', 'product.variants')
+      .getOne();
 
     if (!product) {
       throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
