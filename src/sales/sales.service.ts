@@ -19,6 +19,10 @@ import { ProductErrors } from 'src/common/errors/product.errors';
 import { SalesErrors } from 'src/common/errors/sale.errors';
 import { calculateLineAmounts } from './utils/price-calculator';
 import { PriceService } from 'src/pricing/price.service';
+import {
+  ListSalesForStoreQueryDto,
+  PaginatedSalesResponse,
+} from './dto/list-sales.dto';
 
 @Injectable()
 export class SalesService {
@@ -349,20 +353,73 @@ export class SalesService {
     return sale;
   }
 
-  async findAllForStore(storeId: string, manager?: EntityManager): Promise<Sale[]> {
+  async findAllForStore(
+    query: ListSalesForStoreQueryDto,
+    manager?: EntityManager,
+  ): Promise<PaginatedSalesResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
-    await this.getTenantStoreOrThrow(storeId, manager);
+    await this.getTenantStoreOrThrow(query.storeId, manager);
 
     const repo = manager ? manager.getRepository(Sale) : this.saleRepo;
 
-    return repo.find({
-      where: {
-        tenant: { id: tenantId },
-        store: { id: storeId },
+    const qb = repo
+      .createQueryBuilder('sale')
+      .leftJoin('sale.store', 'store')
+      .select([
+        'sale.id',
+        'sale.status',
+        'sale.totalNet',
+        'sale.totalDiscount',
+        'sale.totalTax',
+        'sale.totalGross',
+        'sale.customerName',
+        'sale.customerPhone',
+        'sale.customerEmail',
+        'sale.note',
+        'sale.createdAt',
+      ])
+      .addSelect(['store.id', 'store.name', 'store.code'])
+      .where('sale.tenantId = :tenantId', { tenantId })
+      .andWhere('sale.storeId = :storeId', { storeId: query.storeId })
+      .orderBy('sale.createdAt', 'DESC')
+      .skip(query.offset)
+      .take(query.limit);
+
+    if (query.includeLines) {
+      qb
+        .leftJoin('sale.lines', 'line')
+        .leftJoin('line.productVariant', 'productVariant')
+        .addSelect([
+          'line.id',
+          'line.quantity',
+          'line.currency',
+          'line.unitPrice',
+          'line.discountPercent',
+          'line.discountAmount',
+          'line.taxPercent',
+          'line.taxAmount',
+          'line.lineTotal',
+          'line.campaignCode',
+        ])
+        .addSelect([
+          'productVariant.id',
+          'productVariant.name',
+          'productVariant.code',
+          'productVariant.barcode',
+        ]);
+    }
+
+    const [sales, total] = await qb.getManyAndCount();
+
+    return {
+      data: sales,
+      meta: {
+        total,
+        limit: query.limit,
+        offset: query.offset,
+        hasMore: query.offset + sales.length < total,
       },
-      relations: ['store'],
-      order: { createdAt: 'DESC' },
-    });
+    };
   }
 }

@@ -4,6 +4,7 @@ import { Tenant } from 'src/tenant/tenant.entity';
 import {
   Column,
   Entity,
+  Index,
   ManyToOne,
   OneToMany,
 } from 'typeorm';
@@ -16,6 +17,7 @@ export enum SaleStatus {
 }
 
 @Entity({ name: 'sales' })
+@Index(['tenant', 'store', 'createdAt'])
 export class Sale extends AuditableEntity {
   @ManyToOne(() => Tenant, { eager: true })
   tenant: Tenant;
