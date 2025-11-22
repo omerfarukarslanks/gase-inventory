@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -16,6 +17,7 @@ import { ProductService } from './product.service';
 import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
 import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
 import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
+import { ListProductsQueryDto } from './dto/list-products.dto';
 
 @ApiTags('Products')
 @ApiBearerAuth('access-token') // DocumentBuilder içindeki key
@@ -34,8 +36,8 @@ export class ProductController {
 
   @Get()
   @ApiOperation({ summary: 'Mevcut tenant için tüm ürünleri listele' })
-  findAll() {
-    return this.productsService.findAll();
+  findAll(@Query() query: ListProductsQueryDto) {
+    return this.productsService.findAll(query);
   }
 
   @Get(':id')
