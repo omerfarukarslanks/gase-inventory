@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { User, UserRole } from './user.entity';
@@ -15,6 +15,8 @@ import { StoreErrors } from 'src/common/errors/store.errors';
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
@@ -125,10 +127,35 @@ export class UsersService {
 
   async validateUser(email: string, password: string): Promise<User | null> {
     const user = await this.findByEmail(email);
-    if (!user || !user.isActive) return null;
+    if (!user || !user.isActive) {
+      this.logFailedLoginAttempt(email, user, user ? 'inactive' : 'not_found');
+      return null;
+    }
 
     const ok = await bcrypt.compare(password, user.passwordHash);
-    return ok ? user : null;
+    if (!ok) {
+      this.logFailedLoginAttempt(email, user, 'invalid_password');
+      return null;
+    }
+
+    return user;
+  }
+
+  private logFailedLoginAttempt(email: string, user: User | null, reason: string) {
+    const ip = this.appContext.getIp() ?? '-';
+    const correlationId = this.appContext.getCorrelationId() ?? '-';
+
+    this.logger.warn(
+      [
+        'login_failed',
+        `reason=${reason}`,
+        `email=${email}`,
+        `userId=${user?.id ?? '-'}`,
+        `tenantId=${user?.tenant?.id ?? '-'}`,
+        `ip=${ip}`,
+        `correlationId=${correlationId}`,
+      ].join(' | '),
+    );
   }
 
   async existsByEmail(email: string) {
