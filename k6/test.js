@@ -1,8 +1,10 @@
 import http from 'k6/http';
 import { check, sleep } from 'k6';
 
-const BASE_URL = __ENV.BASE_URL || 'http://localhost:3000';
-const USER = { email: 'omer.arslan2@outlook.com', password: '47fa1d516A*' };
+const BASE_URL = __ENV.BASE_URL || 'http://host.docker.internal:3000';
+const USER = { email: __ENV.EMAIL, password: __ENV.PASSWORD };
+const STORE_ID = __ENV.STORE_ID || 'STORE_ID';
+const VARIANT_ID = __ENV.VARIANT_ID || 'VARIANT_ID';
 
 export const options = {
   vus: 50,
@@ -26,8 +28,8 @@ export default function () {
 
   // Örnek stok hareketi
   const payload = {
-    storeId: 'STORE_ID',
-    items: [{ variantId: 'VARIANT_ID', quantity: 1, unitPrice: 100 }],
+    storeId: STORE_ID,
+    items: [{ variantId: VARIANT_ID, quantity: 1, unitPrice: 100 }],
   };
   const sell = http.post(`${BASE_URL}/inventory/sell`, JSON.stringify(payload), { ...params, headers: { ...params.headers, 'Content-Type': 'application/json' } });
   check(sell, { 'sell ok': (r) => r.status === 201 || r.status === 200 });
