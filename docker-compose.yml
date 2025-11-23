@@ -40,7 +40,7 @@ services:
     depends_on:
       - influxdb
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
@@ -55,9 +55,18 @@ services:
     container_name: k6-runner
     depends_on:
       - influxdb
+    environment:
+      - BASE_URL=http://host.docker.internal:3000
+      # k6 script için kimlik bilgileri ve örnek veri
+      - EMAIL=
+      - PASSWORD=
+      - STORE_ID=
+      - VARIANT_ID=
     # ./k6 klasöründe test.js dosyan olsun
     volumes:
       - ./k6:/scripts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # Örnek bir test çalıştırma komutu
     entrypoint: ["k6", "run", "--out", "influxdb=http://influxdb:8086/k6", "/scripts/test.js"]
     # compose up yaptığında test bitince container exit eder, bu normal
