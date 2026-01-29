@@ -59,6 +59,7 @@ export class InventoryMovement extends AuditableEntity {
   @ApiPropertyOptional({ example: 'TRY', description: 'Para birimi' })
   @IsOptional()
   @IsIn(['TRY', 'USD', 'EUR'])
+  @Column({ length: 3, nullable: true })
   currency?: string; // "TRY", "USD" vb.
 
   @Column({ type: 'numeric', nullable: true })

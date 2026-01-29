@@ -45,6 +45,7 @@ export class StoreProductPrice {
   @ApiPropertyOptional({ example: 'TRY', description: 'Para birimi' })
   @IsOptional()
   @IsIn(['TRY', 'USD', 'EUR'])
+  @Column({ length: 3, nullable: true })
   currency?: string | null;
 
   /**
