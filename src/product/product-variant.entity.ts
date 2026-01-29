@@ -1,21 +1,16 @@
 import {
   Column,
-  CreateDateColumn,
   Entity,
   ManyToOne,
-  PrimaryGeneratedColumn,
   Unique,
-  UpdateDateColumn,
 } from 'typeorm';
 import { Product } from './product.entity';
+import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
 
 @Entity({ name: 'product_variants' })
 @Unique(['product', 'code'])
 @Unique(['barcode'])
-export class ProductVariant {
-  @PrimaryGeneratedColumn('uuid')
-  id: string;
-
+export class ProductVariant extends AuditableEntity {
   @ManyToOne(() => Product, (product) => product.variants, {
     onDelete: 'CASCADE',
   })
@@ -50,10 +45,4 @@ export class ProductVariant {
 
   @Column({ default: true })
   isActive: boolean;
-
-  @CreateDateColumn()
-  createdAt: Date;
-
-  @UpdateDateColumn()
-  updatedAt: Date;
 }

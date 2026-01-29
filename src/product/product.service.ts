@@ -114,6 +114,7 @@ export class ProductService {
         'product.isActive',
         'product.createdAt',
         'product.updatedAt',
+        'product.createdById',
       ])
       .where('product.id = :id', { id })
       .andWhere('product.tenantId = :tenantId', { tenantId })
@@ -165,6 +166,18 @@ export class ProductService {
   async listVariants(productId: string): Promise<ProductVariant[]> {
     const product = await this.findOne(productId); // tenant filter dahil
     const variant = this.variantRepo.find({
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        barcode: true,
+        attributes: true,
+        createdAt: true,
+        updatedAt: true,
+        createdById: true,
+        updatedById: true,
+        isActive: true,
+      },
       where: { product: { id: product.id } },
       order: { createdAt: 'DESC' },
     });

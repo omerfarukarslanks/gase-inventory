@@ -1,9 +1,9 @@
 import {
+  BadRequestException,
   CanActivate,
   ExecutionContext,
   Injectable,
   Logger,
-  TooManyRequestsException,
 } from '@nestjs/common';
 import { AppContextService } from 'src/common/context/app-context.service';
 import type { Request } from 'express';
@@ -26,9 +26,9 @@ export class LoginRateLimitGuard implements CanActivate {
     const body: any = req.body ?? {};
     const email: string = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '-';
     const ip = this.appContext.getIp() ??
-      (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
+      ((req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() ||
       req.socket.remoteAddress ||
-      'unknown';
+      'unknown');
 
     const key = `${ip}:${email || '-'}`;
     const now = Date.now();
@@ -46,7 +46,7 @@ export class LoginRateLimitGuard implements CanActivate {
           `attempts=${record.timestamps.length}`,
         ].join(' | '),
       );
-      throw new TooManyRequestsException(
+      throw new BadRequestException(
         'Çok fazla deneme yapıldı. Lütfen biraz sonra tekrar deneyin.',
       );
     }

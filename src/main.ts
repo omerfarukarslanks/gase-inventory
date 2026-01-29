@@ -41,6 +41,8 @@ async function bootstrap() {
   SwaggerModule.setup('api-docs', app, document, {
     swaggerOptions: {
       persistAuthorization: true, // sayfa refresh olunca token silinmesin
+      jsonDocumentUrl: 'api-docs/json'
+      
     },
   });
   // ---- Swagger bitti ----
