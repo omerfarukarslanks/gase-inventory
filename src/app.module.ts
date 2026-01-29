@@ -38,7 +38,7 @@ import { PriceModule } from './pricing/price.module';
         password: config.get<string>('DB_PASS'),
         database: config.get<string>('DB_NAME'),
         autoLoadEntities: true, // Entity'leri otomatik yükle
-        synchronize: false,
+        synchronize: config.get<string>('NODE_ENV') !== 'production',
         migrations: [join(__dirname, 'migrations/*.js')],
         migrationsTableName: 'typeorm_migrations',
       }),
@@ -85,6 +85,7 @@ import { PriceModule } from './pricing/price.module';
     SalesModule,
     ReportsModule,
     StockTransferModule,
+    PriceModule,
   ],
   controllers: [AppController],
   providers: [
