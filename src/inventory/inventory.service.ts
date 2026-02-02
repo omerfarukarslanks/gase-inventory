@@ -18,6 +18,9 @@ import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { InventoryErrors } from 'src/common/errors/inventory.errors';
 import { StoreVariantStock } from './store-variant-stock.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
+import { ListMovementsQueryDto, PaginatedMovementsResponse } from './dto/list-movements.dto';
+import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
+import { LowStockQueryDto } from './dto/low-stock-query.dto';
 
 @Injectable()
 export class InventoryService {
@@ -684,6 +687,115 @@ export class InventoryService {
 
     return rows.map((r) => ({
       storeId: r.storeId,
+      quantity: Number(r.quantity),
+    }));
+  }
+
+  // ---- Hareket geçmişi ----
+
+  async getMovementHistory(
+    query: ListMovementsQueryDto,
+    manager?: EntityManager,
+  ): Promise<PaginatedMovementsResponse> {
+    const tenantId = this.getTenantIdOrThrow();
+    const repo = manager
+      ? manager.getRepository(InventoryMovement)
+      : this.movementRepo;
+
+    const qb = repo
+      .createQueryBuilder('m')
+      .leftJoinAndSelect('m.store', 'store')
+      .leftJoinAndSelect('m.productVariant', 'variant')
+      .where('m.tenantId = :tenantId', { tenantId })
+      .orderBy('m.createdAt', 'DESC')
+      .skip(query.offset)
+      .take(query.limit);
+
+    if (query.storeId) {
+      qb.andWhere('m.storeId = :storeId', { storeId: query.storeId });
+    }
+
+    if (query.productVariantId) {
+      qb.andWhere('m.productVariantId = :variantId', { variantId: query.productVariantId });
+    }
+
+    if (query.type) {
+      qb.andWhere('m.type = :type', { type: query.type });
+    }
+
+    if (query.startDate) {
+      qb.andWhere('m.createdAt >= :startDate', { startDate: new Date(query.startDate) });
+    }
+
+    if (query.endDate) {
+      qb.andWhere('m.createdAt <= :endDate', { endDate: new Date(query.endDate) });
+    }
+
+    const [data, total] = await qb.getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        total,
+        limit: query.limit,
+        offset: query.offset,
+        hasMore: query.offset + data.length < total,
+      },
+    };
+  }
+
+  // ---- Toplu stok girişi ----
+
+  async bulkReceiveStock(
+    dto: BulkReceiveStockDto,
+    manager?: EntityManager,
+  ): Promise<InventoryMovement[]> {
+    return this.runInTransaction(manager, async (txManager) => {
+      const results: InventoryMovement[] = [];
+
+      for (const item of dto.items) {
+        const movement = await this.receiveStock(item, txManager);
+        results.push(movement);
+      }
+
+      return results;
+    });
+  }
+
+  // ---- Düşük stok uyarıları ----
+
+  async getLowStockAlerts(
+    query: LowStockQueryDto,
+    manager?: EntityManager,
+  ): Promise<{
+    storeId: string;
+    storeName: string;
+    productVariantId: string;
+    variantName: string;
+    quantity: number;
+  }[]> {
+    const tenantId = this.getTenantIdOrThrow();
+    const repo = this.getStockSummaryRepository(manager);
+
+    const qb = repo
+      .createQueryBuilder('s')
+      .innerJoinAndSelect('s.store', 'store')
+      .innerJoinAndSelect('s.productVariant', 'variant')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.quantity <= :threshold', { threshold: query.threshold })
+      .orderBy('s.quantity', 'ASC');
+
+    if (query.storeId) {
+      qb.andWhere('s.storeId = :storeId', { storeId: query.storeId });
+    }
+
+    const rows = await qb.getMany();
+
+    return rows.map((r) => ({
+      storeId: r.store.id,
+      storeName: r.store.name,
+      productVariantId: r.productVariant.id,
+      variantName: r.productVariant.name,
       quantity: Number(r.quantity),
     }));
   }

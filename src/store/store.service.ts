@@ -6,6 +6,9 @@ import { Tenant } from 'src/tenant/tenant.entity';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { slugify } from 'src/common/utils/slugify';
 import { StoreErrors } from 'src/common/errors/store.errors';
+import { CreateStoreDto } from './dto/create-store.dto';
+import { UpdateStoreDto } from './dto/update-store.dto';
+import { ListStoresQueryDto, PaginatedStoresResponse } from './dto/list-stores.dto';
 
 @Injectable()
 export class StoresService {
@@ -15,9 +18,106 @@ export class StoresService {
     private readonly appContext: AppContextService,
   ) {}
 
+  private getRepo(manager?: EntityManager): Repository<Store> {
+    return manager ? manager.getRepository(Store) : this.storeRepo;
+  }
+
+  async create(dto: CreateStoreDto, manager?: EntityManager): Promise<Store> {
+    const repo = this.getRepo(manager);
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const slug = dto.slug ? slugify(dto.slug) : slugify(dto.name);
+
+    await this.ensureSlugAvailable(slug, tenantId, manager);
+
+    const store = repo.create({
+      ...dto,
+      slug,
+      tenant: { id: tenantId } as any,
+      createdById: userId,
+      updatedById: userId,
+    });
+
+    return repo.save(store);
+  }
+
+  async findAll(query: ListStoresQueryDto, manager?: EntityManager): Promise<PaginatedStoresResponse> {
+    const repo = this.getRepo(manager);
+    const tenantId = this.appContext.getTenantIdOrThrow();
+
+    const qb = repo
+      .createQueryBuilder('store')
+      .where('store.tenantId = :tenantId', { tenantId })
+      .orderBy('store.createdAt', 'DESC')
+      .skip(query.offset)
+      .take(query.limit);
+
+    if (query.cursor) {
+      qb.andWhere('store.createdAt < :cursor', {
+        cursor: new Date(query.cursor),
+      });
+    }
+
+    const [data, total] = await qb.getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        total,
+        limit: query.limit,
+        offset: query.offset,
+        hasMore: query.offset + data.length < total,
+        cursor: query.cursor,
+      },
+    };
+  }
+
+  async findOne(id: string, manager?: EntityManager): Promise<Store> {
+    const repo = this.getRepo(manager);
+    const tenantId = this.appContext.getTenantIdOrThrow();
+
+    const store = await repo.findOne({
+      where: { id, tenant: { id: tenantId } },
+    });
+
+    if (!store) {
+      throw new NotFoundException(StoreErrors.STORE_NOT_FOUND);
+    }
+
+    return store;
+  }
+
+  async update(id: string, dto: UpdateStoreDto, manager?: EntityManager): Promise<Store> {
+    const repo = this.getRepo(manager);
+    const store = await this.findOne(id, manager);
+    const userId = this.appContext.getUserIdOrThrow();
+    const tenantId = this.appContext.getTenantIdOrThrow();
+
+    if (dto.slug || dto.name) {
+      const newSlug = dto.slug ? slugify(dto.slug) : (dto.name ? slugify(dto.name) : store.slug);
+      if (newSlug !== store.slug) {
+        await this.ensureSlugAvailable(newSlug!, tenantId, manager);
+        store.slug = newSlug;
+      }
+    }
+
+    Object.assign(store, dto, { updatedById: userId });
+    if (dto.slug) store.slug = slugify(dto.slug);
+
+    return repo.save(store);
+  }
+
+  async remove(id: string, manager?: EntityManager): Promise<void> {
+    const repo = this.getRepo(manager);
+    const store = await this.findOne(id, manager);
+    await repo.remove(store);
+  }
+
+  // --- Mevcut yardımcı metodlar ---
+
   async createDefaultStoreForTenant(tenant: Tenant, name = 'Merkez Mağaza', manager?: EntityManager) {
+    const repo = this.getRepo(manager);
     const userId = this.appContext.getUserIdOrNull();
-    const repo = manager ? manager.getRepository(Store) : this.storeRepo;
     const slug = slugify(name);
 
     await this.ensureSlugAvailable(slug, tenant.id, manager);
@@ -37,17 +137,17 @@ export class StoresService {
   }
 
   findById(id: string, manager?: EntityManager) {
-    const repo: Repository<Store> = manager ? manager.getRepository(Store) : this.storeRepo;
+    const repo = this.getRepo(manager);
     const store = repo.findOne({ where: { id } });
 
     if (!store) {
       throw new NotFoundException(StoreErrors.STORE_NOT_FOUND);
     }
-    return store; 
+    return store;
   }
 
   findByTenant(tenantId: string, manager?: EntityManager) {
-    const repo: Repository<Store> = manager ? manager.getRepository(Store) : this.storeRepo;
+    const repo = this.getRepo(manager);
     const store = repo.find({
       where: {
         tenant: { id: tenantId },
@@ -62,7 +162,7 @@ export class StoresService {
   }
 
   async ensureSlugAvailable(slug: string, tenantId: string, manager?: EntityManager) {
-    const repo: Repository<Store> = manager ? manager.getRepository(Store) : this.storeRepo;
+    const repo = this.getRepo(manager);
     const exists = await repo.exists({
       where: {
         slug,

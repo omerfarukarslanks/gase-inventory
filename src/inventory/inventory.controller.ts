@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
@@ -12,6 +13,9 @@ import { TransferStockDto } from './dto/transfer-stock.dto';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { SellStockDto } from './dto/sell-stock.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { ListMovementsQueryDto } from './dto/list-movements.dto';
+import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
+import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Inventory')
@@ -26,6 +30,13 @@ export class InventoryController {
   @ApiOperation({ summary: 'Mağazaya stok girişi (tedarik / iade)' })
   receiveStock(@Body() dto: ReceiveStockDto) {
     return this.inventoryService.receiveStock(dto);
+  }
+
+  // Toplu stok girişi
+  @Post('receive/bulk')
+  @ApiOperation({ summary: 'Toplu stok girişi (birden fazla satır)' })
+  bulkReceiveStock(@Body() dto: BulkReceiveStockDto) {
+    return this.inventoryService.bulkReceiveStock(dto);
   }
 
   // Mağazalar arası transfer
@@ -47,6 +58,20 @@ export class InventoryController {
   @ApiOperation({ summary: 'Stok düzeltme' })
   adjust(@Body() dto: AdjustStockDto) {
     return this.inventoryService.adjustStock(dto);
+  }
+
+  // Hareket geçmişi
+  @Get('movements')
+  @ApiOperation({ summary: 'Stok hareket geçmişi (filtreli, paginated)' })
+  getMovementHistory(@Query() query: ListMovementsQueryDto) {
+    return this.inventoryService.getMovementHistory(query);
+  }
+
+  // Düşük stok uyarıları
+  @Get('alerts/low-stock')
+  @ApiOperation({ summary: 'Düşük stok uyarıları' })
+  getLowStockAlerts(@Query() query: LowStockQueryDto) {
+    return this.inventoryService.getLowStockAlerts(query);
   }
 
   // Belirli store + variant için stok
