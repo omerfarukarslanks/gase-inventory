@@ -25,17 +25,25 @@ export class ProductService {
     @InjectRepository(ProductVariant)
     private readonly variantRepo: Repository<ProductVariant>,
     private readonly appContext: AppContextService,
-    private readonly dataSource: DataSource, 
+    private readonly dataSource: DataSource,
   ) {}
 
+  private getProductRepo(manager?: EntityManager): Repository<Product> {
+    return manager ? manager.getRepository(Product) : this.productRepo;
+  }
+
+  private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
+    return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
   async createProduct(dto: CreateProductDto, manager?: EntityManager): Promise<Product> {
+    const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
-    const repo = manager ? manager.getRepository(Product) : this.productRepo;
 
     const product = repo.create({
       ...dto,
-      tenant: { id: tenantId } as any, // relation by id
+      tenant: { id: tenantId } as any,
       defaultCurrency: dto.defaultCurrency ?? 'TRY',
       createdById: userId,
       updatedById: userId,
@@ -48,8 +56,8 @@ export class ProductService {
     query: ListProductsQueryDto,
     manager?: EntityManager,
   ): Promise<PaginatedProductsResponse> {
+    const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
-    const repo = manager ? manager.getRepository(Product) : this.productRepo;
 
     const qb = repo
       .createQueryBuilder('product')
@@ -95,8 +103,8 @@ export class ProductService {
   }
 
   async findOne(id: string, manager?: EntityManager): Promise<Product> {
+    const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
-    const repo = manager ? manager.getRepository(Product) : this.productRepo;
 
     const product = await repo
       .createQueryBuilder('product')
@@ -129,9 +137,9 @@ export class ProductService {
   }
 
   async update(id: string, dto: UpdateProductDto, manager?: EntityManager): Promise<Product> {
-    const product = await this.findOne(id, manager); // tenant filter dahil
+    const repo = this.getProductRepo(manager);
+    const product = await this.findOne(id, manager);
     const userId = this.appContext.getUserIdOrThrow();
-    const repo = manager ? manager.getRepository(Product) : this.productRepo;
 
     Object.assign(product, dto, {
       updatedById: userId,
@@ -140,8 +148,9 @@ export class ProductService {
   }
 
   async remove(id: string, manager?: EntityManager): Promise<void> {
+    const repo = this.getProductRepo(manager);
     const product = await this.findOne(id, manager);
-    await (manager ? manager.getRepository(Product) : this.productRepo).remove(product);
+    await repo.remove(product);
   }
 
   // ---------- Variant işlemleri ----------
@@ -149,23 +158,36 @@ export class ProductService {
   async addVariant(
     productId: string,
     dto: CreateVariantDto,
+    manager?: EntityManager,
   ): Promise<ProductVariant> {
-    return this.dataSource.transaction(async (manager) => {
+    if (manager) {
+      return this.addVariantInternal(productId, dto, manager);
+    }
 
-      const variantRepo = manager.getRepository(ProductVariant);
-      const product = await this.findOne(productId, manager); // tenant filter dahil
-
-      const variant = variantRepo.create({
-        ...dto,
-        product,
-      });
-      return variantRepo.save(variant);
-    });
+    return this.dataSource.transaction((txManager) =>
+      this.addVariantInternal(productId, dto, txManager),
+    );
   }
 
-  async listVariants(productId: string): Promise<ProductVariant[]> {
-    const product = await this.findOne(productId); // tenant filter dahil
-    const variant = this.variantRepo.find({
+  private async addVariantInternal(
+    productId: string,
+    dto: CreateVariantDto,
+    manager: EntityManager,
+  ): Promise<ProductVariant> {
+    const variantRepo = this.getVariantRepo(manager);
+    const product = await this.findOne(productId, manager);
+
+    const variant = variantRepo.create({
+      ...dto,
+      product,
+    });
+    return variantRepo.save(variant);
+  }
+
+  async listVariants(productId: string, manager?: EntityManager): Promise<ProductVariant[]> {
+    const repo = this.getVariantRepo(manager);
+    const product = await this.findOne(productId, manager);
+    const variant = repo.find({
       select: {
         id: true,
         name: true,

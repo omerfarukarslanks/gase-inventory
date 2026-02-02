@@ -59,10 +59,22 @@ export class InventoryService {
     return this.movementRepo.manager.transaction(handler);
   }
 
+  private getMovementRepo(manager?: EntityManager): Repository<InventoryMovement> {
+    return manager ? manager.getRepository(InventoryMovement) : this.movementRepo;
+  }
+
+  private getStoreRepo(manager?: EntityManager): Repository<Store> {
+    return manager ? manager.getRepository(Store) : this.storeRepo;
+  }
+
+  private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
+    return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
   private async getTenantStoreOrThrow(storeId: string, manager?: EntityManager): Promise<Store> {
     const tenantId = this.getTenantIdOrThrow();
 
-    const repo = manager ? manager.getRepository(Store) : this.storeRepo;
+    const repo = this.getStoreRepo(manager);
 
     const store = await repo.findOne({
       where: { id: storeId, tenant: { id: tenantId } },
@@ -79,9 +91,7 @@ export class InventoryService {
     const tenantId = this.getTenantIdOrThrow();
 
     // ProductVariant -> Product -> Tenant üzerinden kontrol
-    const repo = manager ? manager.getRepository(ProductVariant) : this.variantRepo;
-
-    const variant = await repo.findOne({
+    const variant = await this.getVariantRepo(manager).findOne({
       where: {
         id: variantId,
         product: {
@@ -110,9 +120,7 @@ export class InventoryService {
     variantId: string,
     manager?: EntityManager,
   ): Promise<number> {
-    const repo = manager ? manager.getRepository(InventoryMovement) : this.movementRepo;
-
-    const row = await repo
+    const row = await this.getMovementRepo(manager)
       .createQueryBuilder('m')
       .select('COALESCE(SUM(m.quantity), 0)', 'sum')
       .where('m.tenantId = :tenantId', { tenantId })
@@ -222,9 +230,7 @@ export class InventoryService {
   ): Promise<InventoryMovement> {
     const userId = this.getUserIdOrThrow();
 
-    const repo: Repository<InventoryMovement> = manager
-      ? manager.getRepository<InventoryMovement>(InventoryMovement)
-      : this.movementRepo;
+    const repo = this.getMovementRepo(manager);
 
     const movement = repo.create({
       tenant: { id: params.tenantId } as any,
@@ -698,11 +704,7 @@ export class InventoryService {
     manager?: EntityManager,
   ): Promise<PaginatedMovementsResponse> {
     const tenantId = this.getTenantIdOrThrow();
-    const repo = manager
-      ? manager.getRepository(InventoryMovement)
-      : this.movementRepo;
-
-    const qb = repo
+    const qb = this.getMovementRepo(manager)
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.store', 'store')
       .leftJoinAndSelect('m.productVariant', 'variant')

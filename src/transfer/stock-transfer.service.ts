@@ -26,7 +26,11 @@ export class StockTransferService {
         private readonly transferRepo: Repository<StockTransfer>,
     ) { }
 
-    async createAndExecuteTransfer(dto: CreateStockTransferDto): Promise<StockTransfer> {
+    private getTransferRepo(manager?: EntityManager): Repository<StockTransfer> {
+        return manager ? manager.getRepository(StockTransfer) : this.transferRepo;
+    }
+
+    async createAndExecuteTransfer(dto: CreateStockTransferDto, manager?: EntityManager): Promise<StockTransfer> {
         if (dto.fromStoreId === dto.toStoreId) {
             throw new BadRequestException(InventoryErrors.SAME_SOURCE_AND_TARGET_STORE);
         }
@@ -38,7 +42,7 @@ export class StockTransferService {
         const tenantId = this.appContext.getTenantIdOrThrow();
         const userId = this.appContext.getUserIdOrThrow();
 
-        return this.dataSource.transaction(async (manager: EntityManager) => {
+        const handler = async (manager: EntityManager) => {
             const transferRepo = manager.getRepository(StockTransfer);
             const lineRepo = manager.getRepository(StockTransferLine);
             const storeRepo = manager.getRepository(Store);
@@ -160,13 +164,19 @@ export class StockTransferService {
 
             savedTransfer.lines = lines;
             return savedTransfer;
-        });
+        };
+
+        if (manager) {
+            return handler(manager);
+        }
+
+        return this.dataSource.transaction(handler);
     }
 
-    async findById(id: string): Promise<StockTransfer> {
+    async findById(id: string, manager?: EntityManager): Promise<StockTransfer> {
         const tenantId = this.appContext.getTenantIdOrThrow();
 
-        const transfer = await this.transferRepo.findOne({
+        const transfer = await this.getTransferRepo(manager).findOne({
             where: { id, tenant: { id: tenantId } },
             relations: ['fromStore', 'toStore', 'lines', 'lines.productVariant'],
         });

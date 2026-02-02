@@ -13,14 +13,15 @@ export class TenantsService {
     private readonly appContext: AppContextService,
   ) {}
 
-  async create(name: string, slug: string, manager?: EntityManager) {
-    
-    const repo:Repository<Tenant> = manager ? manager.getRepository(Tenant) : this.tenantRepo;
+  private getRepo(manager?: EntityManager): Repository<Tenant> {
+    return manager ? manager.getRepository(Tenant) : this.tenantRepo;
+  }
 
-    // actorUserId verilmişse onu kullan, yoksa context'ten al (login-required senaryolar için)
+  async create(name: string, slug: string, manager?: EntityManager) {
+    const repo = this.getRepo(manager);
     const userId = this.appContext.getUserIdOrNull();
-    const exists = await this.existsByName(name);
-    
+    const exists = await this.existsByName(name, manager);
+
     if (exists) {
       throw new ConflictException(TenantErrors.TENANT_NAME_ALREADY_EXISTS);
     }
@@ -38,17 +39,14 @@ export class TenantsService {
   }
 
   findById(id: string, manager?: EntityManager) {
-    const repo: Repository<Tenant> = manager ? manager.getRepository(Tenant) : this.tenantRepo;
-    return repo.findOne({ where: { id } });
+    return this.getRepo(manager).findOne({ where: { id } });
   }
 
   findBySlug(slug: string, manager?: EntityManager) {
-    const repo: Repository<Tenant> = manager ? manager.getRepository(Tenant) : this.tenantRepo;
-    return repo.findOne({ where: { slug } });
+    return this.getRepo(manager).findOne({ where: { slug } });
   }
 
   async existsByName(name: string, manager?: EntityManager) {
-    const repo: Repository<Tenant> = manager ? manager.getRepository(Tenant) : this.tenantRepo;
-    return await repo.exists({ where: { name } });
+    return await this.getRepo(manager).exists({ where: { name } });
   }
 }

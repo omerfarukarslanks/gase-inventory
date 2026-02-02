@@ -41,10 +41,26 @@ export class SalesService {
     private readonly dataSource: DataSource,
   ) { }
 
+  private getSaleRepo(manager?: EntityManager): Repository<Sale> {
+    return manager ? manager.getRepository(Sale) : this.saleRepo;
+  }
+
+  private getSaleLineRepo(manager?: EntityManager): Repository<SaleLine> {
+    return manager ? manager.getRepository(SaleLine) : this.saleLineRepo;
+  }
+
+  private getStoreRepo(manager?: EntityManager): Repository<Store> {
+    return manager ? manager.getRepository(Store) : this.storeRepo;
+  }
+
+  private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
+    return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
   private async getTenantStoreOrThrow(storeId: string, manager?: EntityManager): Promise<Store> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
-    const repo = manager ? manager.getRepository(Store) : this.storeRepo;
+    const repo = this.getStoreRepo(manager);
 
     const store = await repo.findOne({
       where: { id: storeId, tenant: { id: tenantId } },
@@ -64,9 +80,7 @@ export class SalesService {
   ): Promise<ProductVariant> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
-    const repo = manager ? manager.getRepository(ProductVariant) : this.variantRepo;
-
-    const variant = await repo.findOne({
+    const variant = await this.getVariantRepo(manager).findOne({
       where: {
         id: variantId,
         product: { tenant: { id: tenantId } },
@@ -336,9 +350,7 @@ export class SalesService {
   async findOne(id: string, manager?: EntityManager): Promise<Sale> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
-    const repo = manager ? manager.getRepository(Sale) : this.saleRepo;
-
-    const sale = await repo.findOne({
+    const sale = await this.getSaleRepo(manager).findOne({
       where: {
         id,
         tenant: { id: tenantId },
@@ -361,9 +373,7 @@ export class SalesService {
 
     await this.getTenantStoreOrThrow(query.storeId, manager);
 
-    const repo = manager ? manager.getRepository(Sale) : this.saleRepo;
-
-    const qb = repo
+    const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
       .leftJoin('sale.store', 'store')
       .select([

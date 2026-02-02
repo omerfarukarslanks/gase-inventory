@@ -17,6 +17,14 @@ export class PriceService {
     private readonly appContext: AppContextService,
   ) {}
 
+  private getSppRepo(manager?: EntityManager): Repository<StoreProductPrice> {
+    return manager ? manager.getRepository(StoreProductPrice) : this.sppRepo;
+  }
+
+  private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
+    return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
   private getTenantIdOrThrow() {
     return this.appContext.getTenantIdOrThrow();
   }
@@ -25,11 +33,6 @@ export class PriceService {
     return this.appContext.getUserIdOrThrow();
   }
 
-  /**
-   * Store + variant için "efektif" fiyat parametreleri:
-   * - Önce StoreProductPrice override'a bakar
-   * - Yoksa ProductVariant default değerlerini kullanır.
-   */
   async getEffectiveSaleParamsForStore(
     storeId: string,
     productVariantId: string,
@@ -42,16 +45,9 @@ export class PriceService {
     isStoreOverride: boolean;
   }> {
     const tenantId = this.getTenantIdOrThrow();
+    const variantRepo = this.getVariantRepo(manager);
+    const sppRepo = this.getSppRepo(manager);
 
-    const variantRepo: Repository<ProductVariant> = manager
-      ? manager.getRepository<ProductVariant>(ProductVariant)
-      : this.variantRepo;
-
-    const sppRepo: Repository<StoreProductPrice> = manager
-      ? manager.getRepository<StoreProductPrice>(StoreProductPrice)
-      : this.sppRepo;
-
-    // Önce varyantın tenant’a ait olduğundan emin ol
     const variant = await variantRepo.findOne({
       where: {
         id: productVariantId,
@@ -64,7 +60,6 @@ export class PriceService {
       throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
     }
 
-    // Mağaza override var mı?
     const storePrice = await sppRepo.findOne({
       where: {
         tenant: { id: tenantId },
@@ -96,12 +91,11 @@ export class PriceService {
       };
     }
 
-    // Override yoksa: tenant default
     return {
       unitPrice: variant.defaultSalePrice ?? null,
       currency: variant.defaultCurrency ?? 'TRY',
       taxPercent: variant.defaultTaxPercent ?? null,
-      discountPercent: null, // tenant level default indirim yok varsayalım
+      discountPercent: null,
       isStoreOverride: false,
     };
   }
@@ -128,13 +122,8 @@ export class PriceService {
       return new Map();
     }
 
-    const variantRepo: Repository<ProductVariant> = manager
-      ? manager.getRepository<ProductVariant>(ProductVariant)
-      : this.variantRepo;
-
-    const sppRepo: Repository<StoreProductPrice> = manager
-      ? manager.getRepository<StoreProductPrice>(StoreProductPrice)
-      : this.sppRepo;
+    const variantRepo = this.getVariantRepo(manager);
+    const sppRepo = this.getSppRepo(manager);
 
     const variants = await variantRepo.find({
       where: {
@@ -208,10 +197,6 @@ export class PriceService {
     return result;
   }
 
-  /**
-   * Mağaza için özel fiyat + vergi + indirim yüzdesi set et.
-   * - salePrice null verilirse override pasif olabilir (isActive false)
-   */
   async setStorePriceForVariant(params: {
     storeId: string;
     productVariantId: string;
@@ -223,10 +208,7 @@ export class PriceService {
   }): Promise<StoreProductPrice> {
     const tenantId = this.getTenantIdOrThrow();
     const userId = this.getUserIdOrThrow();
-
-    const sppRepo: Repository<StoreProductPrice> = params.manager
-      ? params.manager.getRepository<StoreProductPrice>(StoreProductPrice)
-      : this.sppRepo;
+    const sppRepo = this.getSppRepo(params.manager);
 
     let spp = await sppRepo.findOne({
       where: {
@@ -259,27 +241,19 @@ export class PriceService {
       spp.discountPercent = params.discountPercent;
     }
 
-    // salePrice null ise override’ı pasif kabul edebiliriz
     spp.isActive = params.salePrice != null;
     spp.updatedById = userId;
 
     return sppRepo.save(spp);
   }
 
-  /**
-   * Mağaza override'ını tamamen kaldır
-   * (sonra tenant default fiyat devreye girer)
-   */
   async clearStoreOverride(
     storeId: string,
     productVariantId: string,
     manager?: EntityManager,
   ): Promise<void> {
     const tenantId = this.getTenantIdOrThrow();
-
-    const sppRepo: Repository<StoreProductPrice> = manager
-      ? manager.getRepository<StoreProductPrice>(StoreProductPrice)
-      : this.sppRepo;
+    const sppRepo = this.getSppRepo(manager);
 
     const spp = await sppRepo.findOne({
       where: {
