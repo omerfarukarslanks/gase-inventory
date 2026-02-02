@@ -5,6 +5,7 @@ import { UserStore } from './user-store.entity';
 import { TenantModule } from 'src/tenant/tenant.module';
 import { StoreModule } from 'src/store/store.module';
 import { UsersService } from './user.service';
+import { UserController, StoreUsersController } from './user.controller';
 import { Store } from 'src/store/store.entity';
 
 @Module({
@@ -13,6 +14,7 @@ import { Store } from 'src/store/store.entity';
     TenantModule,
     StoreModule,
   ],
+  controllers: [UserController, StoreUsersController],
   providers: [UsersService],
   exports: [UsersService],})
 export class UserModule {}

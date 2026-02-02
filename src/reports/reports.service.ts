@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Between, In } from 'typeorm';
+import { EntityManager, Repository, Between, In } from 'typeorm';
 
 import { AppContextService } from '../common/context/app-context.service';
 import { Sale } from '../sales/sale.entity';
@@ -25,10 +25,26 @@ export class ReportsService {
     private readonly appContext: AppContextService,
   ) {}
 
-  private async ensureStoreOfTenant(storeId: string): Promise<Store> {
+  private getStockSummaryRepo(manager?: EntityManager): Repository<StoreVariantStock> {
+    return manager ? manager.getRepository(StoreVariantStock) : this.stockSummaryRepo;
+  }
+
+  private getStoreRepo(manager?: EntityManager): Repository<Store> {
+    return manager ? manager.getRepository(Store) : this.storeRepo;
+  }
+
+  private getSaleRepo(manager?: EntityManager): Repository<Sale> {
+    return manager ? manager.getRepository(Sale) : this.saleRepo;
+  }
+
+  private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
+    return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
+  private async ensureStoreOfTenant(storeId: string, manager?: EntityManager): Promise<Store> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
-    const store = await this.storeRepo.findOne({
+    const store = await this.getStoreRepo(manager).findOne({
       where: { id: storeId, tenant: { id: tenantId } },
     });
 
@@ -40,12 +56,12 @@ export class ReportsService {
   }
 
   // 1) Mağaza bazlı stok özeti
-  async getStoreStockSummary(storeId: string) {
+  async getStoreStockSummary(storeId: string, manager?: EntityManager) {
     const tenantId = this.appContext.getTenantIdOrThrow();
-    await this.ensureStoreOfTenant(storeId);
+    await this.ensureStoreOfTenant(storeId, manager);
 
     // variant bazlı stok toplamı
-    const rows = await this.stockSummaryRepo
+    const rows = await this.getStockSummaryRepo(manager)
       .createQueryBuilder('s')
       .select('s.productVariantId', 'productVariantId')
       .addSelect('s.quantity', 'quantity')
@@ -57,7 +73,7 @@ export class ReportsService {
 
     // variant isimlerini de çekelim
     const variantIds = rows.map((r) => r.productVariantId);
-    const variants = await this.variantRepo.find({
+    const variants = await this.getVariantRepo(manager).find({
       where: { id: In(variantIds) },
       relations: ['product'],
     });
@@ -83,9 +99,9 @@ export class ReportsService {
     storeId: string;
     startDate: string; // ISO yyyy-mm-dd
     endDate: string;   // ISO yyyy-mm-dd
-  }) {
+  }, manager?: EntityManager) {
     const tenantId = this.appContext.getTenantIdOrThrow();
-    const store = await this.ensureStoreOfTenant(params.storeId);
+    const store = await this.ensureStoreOfTenant(params.storeId, manager);
 
     const start = new Date(params.startDate);
     const end = new Date(params.endDate);
@@ -95,7 +111,7 @@ export class ReportsService {
       throw new BadRequestException(ReportsErrors.INVALID_DATE_RANGE);
     }
 
-    const sales = await this.saleRepo.find({
+    const sales = await this.getSaleRepo(manager).find({
       where: {
         tenant: { id: tenantId },
         store: { id: store.id },

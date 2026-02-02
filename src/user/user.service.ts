@@ -31,13 +31,17 @@ export class UsersService {
     private readonly storeRepo: Repository<Store>,
   ) {}
 
+    private getRepo(manager?: EntityManager): Repository<User> {
+    return manager ? manager.getRepository(User) : this.userRepo;
+  }
+
   findByEmail(email: string, manager?: EntityManager) {
-    const repo: Repository<User> = manager ? manager.getRepository(User) : this.userRepo;
+    const repo: Repository<User> = this.getRepo(manager);
     return repo.findOne({ where: { email } });
   }
 
   findById(id: string, manager?: EntityManager) {
-    const repo: Repository<User> = manager ? manager.getRepository(User) : this.userRepo;
+    const repo: Repository<User> = this.getRepo(manager);
     return repo.findOne({ where: { id } });
   }
 
@@ -354,6 +358,23 @@ export class UsersService {
     return userStores.map((us) => us.user);
   }
 
+  async deleteUser(userId: string): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
 
+    return this.dataSource.transaction(async (manager: EntityManager) => {
+      const userRepo = manager.getRepository(User);
+      const userStoreRepo = manager.getRepository(UserStore);
 
+      const user = await userRepo.findOne({
+        where: { id: userId, tenant: { id: tenantId } },
+      });
+
+      if (!user) {
+        throw new NotFoundException(UserErrors.USER_NOT_FOUND);
+      }
+
+      await userStoreRepo.delete({ user: { id: userId } });
+      await userRepo.remove(user);
+    });
+  }
 }
