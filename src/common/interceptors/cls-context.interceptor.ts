@@ -10,7 +10,15 @@ import { Observable, tap } from 'rxjs';
 import { RequestWithUser } from '../types/request-with-user';
 import { ClsService } from 'nestjs-cls';
 import { AppClsStore } from '../context/cls-store.type';
-import { v4 as uuidv4 } from 'uuid';
+let uuidv4Fn: () => string;
+
+async function getUuidV4(): Promise<string> {
+  if (!uuidv4Fn) {
+    const mod = await import('uuid');
+    uuidv4Fn = mod.v4;
+  }
+  return uuidv4Fn(); // 👈 burada çağırıyoruz
+}
 
 @Injectable()
 export class ClsContextInterceptor implements NestInterceptor {
@@ -20,7 +28,7 @@ export class ClsContextInterceptor implements NestInterceptor {
     private readonly cls: ClsService<AppClsStore>,
   ) {}
 
-  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+  async intercept(context: ExecutionContext, next: CallHandler): Promise<Observable<any>> {
 
      // Sadece HTTP için header set edelim
     if (context.getType() !== 'http') {
@@ -43,7 +51,7 @@ export class ClsContextInterceptor implements NestInterceptor {
     const correlationId =
       (typeof headerValue === 'string' && headerValue.trim().length > 0)
         ? headerValue.trim()
-        : uuidv4(); // 🔹 her zaman string, asla undefined değil
+        : await getUuidV4(); // 🔹 her zaman string, asla undefined değil
 
     // 2) CLS içine yaz
     this.cls.set('correlationId', correlationId);
