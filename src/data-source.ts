@@ -5,7 +5,7 @@ import { join } from 'path';
 
 dotenv.config();
 
-export const AppDataSource = new DataSource({
+const AppDataSource = new DataSource({
   type: 'postgres',
   host: process.env.DB_HOST,
   port: Number(process.env.DB_PORT) || 5432,
