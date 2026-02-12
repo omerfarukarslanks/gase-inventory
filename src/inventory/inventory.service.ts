@@ -228,46 +228,48 @@ export class InventoryService {
     },
     manager?: EntityManager,
   ): Promise<InventoryMovement> {
-    const userId = this.getUserIdOrThrow();
+    return this.runInTransaction(manager, async (txManager) => {
+      const userId = this.getUserIdOrThrow();
 
-    const repo = this.getMovementRepo(manager);
+      const repo = this.getMovementRepo(txManager);
 
-    const movement = repo.create({
-      tenant: { id: params.tenantId } as any,
-      store: { id: params.store.id } as any,
-      productVariant: { id: params.variant.id } as any,
-      type: params.type,
-      quantity: params.quantity,
-      reference: params.reference,
-      meta: params.meta,
+      const movement = repo.create({
+        tenant: { id: params.tenantId } as any,
+        store: { id: params.store.id } as any,
+        productVariant: { id: params.variant.id } as any,
+        type: params.type,
+        quantity: params.quantity,
+        reference: params.reference,
+        meta: params.meta,
 
-      currency: params.currency,
-      unitPrice: params.unitPrice,
-      discountPercent: params.discountPercent,
-      discountAmount: params.discountAmount,
-      taxPercent: params.taxPercent,
-      taxAmount: params.taxAmount,
-      lineTotal: params.lineTotal,
-      campaignCode: params.campaignCode,
+        currency: params.currency,
+        unitPrice: params.unitPrice,
+        discountPercent: params.discountPercent,
+        discountAmount: params.discountAmount,
+        taxPercent: params.taxPercent,
+        taxAmount: params.taxAmount,
+        lineTotal: params.lineTotal,
+        campaignCode: params.campaignCode,
 
-      saleId: params.saleId,
-      saleLineId: params.saleLineId,
+        saleId: params.saleId,
+        saleLineId: params.saleLineId,
 
-      createdById: userId,
-      updatedById: userId,
+        createdById: userId,
+        updatedById: userId,
+      });
+
+      const savedMovement = await repo.save(movement);
+
+      await this.applyMovementToStockSummary(
+        params.tenantId,
+        params.store.id,
+        params.variant.id,
+        params.quantity,
+        txManager,
+      );
+
+      return savedMovement;
     });
-
-    const savedMovement = await repo.save(movement);
-
-    await this.applyMovementToStockSummary(
-      params.tenantId,
-      params.store.id,
-      params.variant.id,
-      params.quantity,
-      manager,
-    );
-
-    return savedMovement;
   }
 
   private async getLockedStockForVariantInStore(

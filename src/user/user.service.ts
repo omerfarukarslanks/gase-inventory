@@ -23,15 +23,15 @@ export class UsersService {
     private readonly tenantsService: TenantsService,
     private readonly storesService: StoresService,
     private readonly appContext: AppContextService,
-    private readonly dataSource: DataSource, 
+    private readonly dataSource: DataSource,
 
     @InjectRepository(UserStore)
     private readonly userStoreRepo: Repository<UserStore>,
     @InjectRepository(Store)
     private readonly storeRepo: Repository<Store>,
-  ) {}
+  ) { }
 
-    private getRepo(manager?: EntityManager): Repository<User> {
+  private getRepo(manager?: EntityManager): Repository<User> {
     return manager ? manager.getRepository(User) : this.userRepo;
   }
 
@@ -50,83 +50,83 @@ export class UsersService {
    */
   async createTenantWithOwner(input: {
     tenantName: string;
-    tenantSlug: string;
+    tenantSlug?: string;
     email: string;
     password: string;
     name: string;
     surname: string;
   }) {
 
-   const userId = this.appContext.getUserIdOrNull();
+    const userId = this.appContext.getUserIdOrNull();
     // Transaction dışından -> sadece çağrı
-  return this.dataSource.transaction(async (manager) => {
+    return this.dataSource.transaction(async (manager) => {
 
-    // 🔹 Transaction içindeki repo'lar
-    const userRepo = manager.getRepository(User);
-    const userStoreRepo = manager.getRepository(UserStore);
+      // 🔹 Transaction içindeki repo'lar
+      const userRepo = manager.getRepository(User);
+      const userStoreRepo = manager.getRepository(UserStore);
+      console.log(input)
+      // 1) Tenant oluştur
+      const tenant = await this.tenantsService.create(
+        input.tenantName,
+        slugify(input.tenantName),
+        manager
+      );
 
-     // 1) Tenant oluştur
-    const tenant = await this.tenantsService.create(
-      input.tenantName,
-      slugify(input.tenantName),
-      manager
-    );
+      const randomName = generateRandomStoreName(tenant.name);
+      // 2) Default store oluştur
+      const store = await this.storesService.createDefaultStoreForTenant(tenant, randomName, manager);
 
-    const randomName = generateRandomStoreName(tenant.name);
-        // 2) Default store oluştur
-    const store = await this.storesService.createDefaultStoreForTenant(tenant, randomName, manager);
+      // 3) OWNER user oluştur
+      const passwordHash = await bcrypt.hash(input.password, 10);
 
-    // 3) OWNER user oluştur
-    const passwordHash = await bcrypt.hash(input.password, 10);
+      // 4) E-posta adresi kullanımda mı kontrol et
+      const existsEmail = await userRepo.exists({
+        where: { email: input.email },
+      });
 
-     // 4) E-posta adresi kullanımda mı kontrol et
-    const existsEmail = await userRepo.exists({
-      where: { email: input.email },
+      if (existsEmail) {
+        throw new ConflictException(UserErrors.EMAIL_ALREADY_IN_USE);
+      }
+
+      // 5) User kaydı
+      const user = userRepo.create({
+        tenant: tenant, // Make sure 'tenant' is a relation in User entity
+        email: input.email,
+        name: input.name,
+        surname: input.surname,
+        passwordHash,
+        role: UserRole.OWNER,
+        ...(userId && {
+          createdById: userId,
+          updatedById: userId,
+        }),
+      });
+      const savedUser = await userRepo.save(user);
+
+      // 6) User–Store ilişkisinin kaydı
+      const userStore = userStoreRepo.create({
+        user: savedUser,
+        store,
+        role: StoreUserRole.MANAGER,
+        ...(userId && {
+          createdById: userId,
+          updatedById: userId,
+        }),
+      });
+      await userStoreRepo.save(userStore);
+
+      // 7) Signup senaryosunda tenant/store createdById'yi owner'a bağla
+      if (!userId) {
+        tenant.createdById = savedUser.id;
+        tenant.updatedById = savedUser.id;
+        store.createdById = savedUser.id;
+        store.updatedById = savedUser.id;
+
+        await manager.save([tenant, store]);
+      }
+
+      return savedUser;
     });
-
-    if (existsEmail) {
-      throw new ConflictException(UserErrors.EMAIL_ALREADY_IN_USE);
-    }
-
-       // 5) User kaydı
-    const user = userRepo.create({
-      tenant: tenant, // Make sure 'tenant' is a relation in User entity
-      email: input.email,
-      name: input.name,
-      surname: input.surname,
-      passwordHash,
-      role: UserRole.OWNER,
-      ...(userId && {
-        createdById: userId,
-        updatedById: userId,
-      }),
-    });
-    const savedUser = await userRepo.save(user);
-
-    // 6) User–Store ilişkisinin kaydı
-    const userStore = userStoreRepo.create({
-      user: savedUser,
-      store,
-      role: StoreUserRole.MANAGER,
-      ...(userId && {
-        createdById: userId,
-        updatedById: userId,
-      }),
-    });
-    await userStoreRepo.save(userStore);
-
-    // 7) Signup senaryosunda tenant/store createdById'yi owner'a bağla
-    if (!userId) {
-      tenant.createdById = savedUser.id;
-      tenant.updatedById = savedUser.id;
-      store.createdById = savedUser.id;
-      store.updatedById = savedUser.id;
-
-      await manager.save([tenant, store]);
-    }
-
-    return savedUser;
-   });
   }
 
   async validateUser(email: string, password: string): Promise<User | null> {
@@ -166,7 +166,7 @@ export class UsersService {
     return await this.userRepo.exists({ where: { email } });
   }
 
-    // Tenant içi user oluşturma
+  // Tenant içi user oluşturma
   async createUserForTenant(input: {
     email: string;
     password: string;
@@ -229,7 +229,7 @@ export class UsersService {
     });
   }
 
-    async updateUserForTenant(
+  async updateUserForTenant(
     userId: string,
     input: {
       name?: string;
@@ -258,7 +258,7 @@ export class UsersService {
 
     return this.userRepo.save(user);
   }
-   
+
   // Kullanıcıyı mağazaya ata
   async assignUserToStore(userId: string, storeId: string, role: StoreUserRole) {
     const tenantId = this.appContext.getTenantIdOrThrow();
@@ -313,7 +313,7 @@ export class UsersService {
     await this.userStoreRepo.remove(us);
   }
 
-    async getUserDetails(userId: string): Promise<User> {
+  async getUserDetails(userId: string): Promise<User> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
     const user = await this.userRepo.findOne({
@@ -375,6 +375,23 @@ export class UsersService {
 
       await userStoreRepo.delete({ user: { id: userId } });
       await userRepo.remove(user);
+    });
+  }
+
+  async updatePassword(userId: string, passwordHash: string): Promise<void> {
+    return this.dataSource.transaction(async (manager: EntityManager) => {
+
+      const userRepo = manager.getRepository(User);
+      const result = await userRepo.update(
+        { id: userId },
+        {
+          passwordHash: passwordHash,
+        },
+      );
+
+      if (result.affected === 0) {
+        throw new NotFoundException('Kullanıcı bulunamadı');
+      }
     });
   }
 }
