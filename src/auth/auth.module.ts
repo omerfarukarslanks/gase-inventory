@@ -8,11 +8,15 @@ import { LocalStrategy } from './local.strategy';
 import { JwtStrategy } from './jwt.strategy';
 import { AuthController } from './auth.controller';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
+import { MailService } from 'src/mail/mail.service';
+import { PasswordResetToken } from './password-reset-token';
+import { TypeOrmModule } from '@nestjs/typeorm';
 
 @Module({
     imports: [
     UserModule,
     PassportModule,
+    TypeOrmModule.forFeature([PasswordResetToken]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -22,7 +26,7 @@ import { LoginRateLimitGuard } from './login-rate-limit.guard';
       }),
     }),
   ],
-  providers: [AuthService, LocalStrategy, JwtStrategy, LoginRateLimitGuard],
+  providers: [AuthService, MailService, LocalStrategy, JwtStrategy, LoginRateLimitGuard],
   controllers: [AuthController],
 })
 export class AuthModule {}
