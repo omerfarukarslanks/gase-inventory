@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -42,14 +43,14 @@ export class ProductController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Belirli bir ürünü getir' })
-  findOne(@Param('id') id: string) {
+  findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.findOne(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Belirli bir ürünü güncelle' })
   update(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductDto,
   ) {
     return this.productsService.update(id, dto);
@@ -57,7 +58,7 @@ export class ProductController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Belirli bir ürünü sil' })
-  remove(@Param('id') id: string) {
+  remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);
   }
 
@@ -66,7 +67,7 @@ export class ProductController {
   @Post(':id/variants')
   @ApiOperation({ summary: 'Ürüne varyant ekle' })
   addVariant(
-    @Param('id') productId: string,
+    @Param('id', ParseUUIDPipe) productId: string,
     @Body() dto: CreateVariantDto,
   ) {
     return this.productsService.addVariant(productId, dto);
@@ -74,7 +75,7 @@ export class ProductController {
 
   @Get(':id/variants')
   @ApiOperation({ summary: 'Ürünün tüm varyantlarını listele' })
-  listVariants(@Param('id') productId: string) {
+  listVariants(@Param('id', ParseUUIDPipe) productId: string) {
     return this.productsService.listVariants(productId);
   }
 }
