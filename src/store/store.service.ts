@@ -52,7 +52,7 @@ export class StoresService {
 
     if (search) {
       qb.andWhere(
-        '(store.name ILIKE :search OR store.code ILIKE :search OR store.slug ILIKE :search)',
+        '(store.name ILIKE :search OR store.code ILIKE :search OR store.slug ILIKE :search OR store.address ILIKE :search OR store.description ILIKE :search)',
         { search: `%${search}%` },
       );
     }
@@ -112,7 +112,12 @@ export class StoresService {
   async remove(id: string, manager?: EntityManager): Promise<void> {
     const repo = this.getRepo(manager);
     const store = await this.findOne(id, manager);
-    await repo.remove(store);
+    const userId = this.appContext.getUserIdOrThrow();
+
+    store.isActive = false;
+    store.updatedById = userId;
+
+    await repo.save(store);
   }
 
   // --- Mevcut yardımcı metodlar ---
