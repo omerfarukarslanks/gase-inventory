@@ -1,9 +1,9 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { UsersService } from 'src/user/user.service';
 import { MailService } from 'src/mail/mail.service';
 import { PasswordResetToken } from './password-reset-token';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
@@ -16,6 +16,7 @@ export class AuthService {
     private readonly mailService: MailService,
     @InjectRepository(PasswordResetToken)
     private readonly tokenRepo: Repository<PasswordResetToken>,
+    private readonly dataSource: DataSource,
   ) { }
 
   validateUser(email: string, password: string) {
@@ -60,21 +61,27 @@ export class AuthService {
     const token = randomBytes(32).toString('hex'); // linkte gidecek
     const tokenHash = this.hashToken(token);
 
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 dk
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 dk
 
-    await this.tokenRepo.insert({
-      userId: user.id,
-      tenantId: (user as any).tenantId, // varsa
-      tokenHash,
-      expiresAt,
+    await this.dataSource.transaction(async (manager) => {
+      const tokenRepo = manager.getRepository(PasswordResetToken);
+      await tokenRepo.insert({
+        userId: user.id,
+        tenantId: (user as any).tenantId, // varsa
+        tokenHash,
+        expiresAt,
+      });
+
+      
+    // Mail gönderimi transaction dışında: başarısız olsa bile token kaybolmaz
+    const resetUrl = `${process.env.APP_WEB_URL}/reset-password?token=${encodeURIComponent(token)}`;
+    await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
     });
 
-    const resetUrl = `${process.env.APP_WEB_URL}/reset-password?token=${encodeURIComponent(token)}`;
-
-    await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
   }
 
   async resetPassword(token: string, newPassword: string) {
+
     const tokenHash = this.hashToken(token);
 
     const record = await this.tokenRepo.findOne({
@@ -82,13 +89,13 @@ export class AuthService {
     });
 
     if (!record) {
-      throw new Error('Invalid token'); // bunu BadRequestException yap
+      throw new BadRequestException('Geçersiz token');
     }
     if (record.usedAt) {
-      throw new Error('Token already used');
+      throw new BadRequestException('Token zaten kullanılmış');
     }
     if (record.expiresAt.getTime() < Date.now()) {
-      throw new Error('Token expired');
+      throw new BadRequestException('Token süresi dolmuş');
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
