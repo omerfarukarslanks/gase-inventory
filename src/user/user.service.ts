@@ -129,19 +129,92 @@ export class UsersService {
     });
   }
 
+  /**
+   * OAuth ile gelen kullanıcı için tenant + store + OWNER user oluştur
+   */
+  async createTenantWithOwnerOAuth(input: {
+    email: string;
+    name: string;
+    surname: string;
+    avatar?: string;
+    authProvider: string;
+    authProviderId: string;
+  }): Promise<User> {
+    const userId = this.appContext.getUserIdOrNull();
+
+    return this.dataSource.transaction(async (manager) => {
+      const userRepo = manager.getRepository(User);
+      const userStoreRepo = manager.getRepository(UserStore);
+
+      const existsEmail = await userRepo.exists({
+        where: { email: input.email },
+      });
+      if (existsEmail) {
+        throw new ConflictException(UserErrors.EMAIL_ALREADY_IN_USE);
+      }
+
+      const tenantName = `${input.name} ${input.surname}`.trim() || input.email.split('@')[0];
+      const tenant = await this.tenantsService.create(
+        tenantName,
+        slugify(tenantName),
+        manager,
+      );
+
+      const randomName = generateRandomStoreName(tenant.name);
+      const store = await this.storesService.createDefaultStoreForTenant(tenant, randomName, manager);
+
+      const user = userRepo.create({
+        tenant,
+        email: input.email,
+        name: input.name,
+        surname: input.surname,
+        avatar: input.avatar ?? undefined,
+        authProvider: input.authProvider,
+        authProviderId: input.authProviderId,
+        role: UserRole.OWNER,
+        ...(userId && {
+          createdById: userId,
+          updatedById: userId,
+        }),
+      });
+      const savedUser = await userRepo.save(user);
+
+      const userStore = userStoreRepo.create({
+        user: savedUser,
+        store,
+        role: StoreUserRole.MANAGER,
+        ...(userId && {
+          createdById: userId,
+          updatedById: userId,
+        }),
+      });
+      await userStoreRepo.save(userStore);
+
+      if (!userId) {
+        tenant.createdById = savedUser.id;
+        tenant.updatedById = savedUser.id;
+        store.createdById = savedUser.id;
+        store.updatedById = savedUser.id;
+        await manager.save([tenant, store]);
+      }
+
+      return savedUser;
+    });
+  }
+
   async validateUser(email: string, password: string): Promise<User | null> {
     const user = await this.findByEmail(email);
     if (!user || !user.isActive) {
       this.logFailedLoginAttempt(email, user, user ? 'inactive' : 'not_found');
       return null;
     }
-
-    const ok = await bcrypt.compare(password, user.passwordHash);
-    if (!ok) {
-      this.logFailedLoginAttempt(email, user, 'invalid_password');
-      return null;
+    if (user.passwordHash) {
+      const ok = await bcrypt.compare(password, user.passwordHash);
+      if (!ok) {
+        this.logFailedLoginAttempt(email, user, 'invalid_password');
+        return null;
+      }
     }
-
     return user;
   }
 

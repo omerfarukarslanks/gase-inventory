@@ -8,6 +8,15 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
 
+export interface OAuthUserPayload {
+  email: string;
+  name: string;
+  surname: string;
+  avatar?: string;
+  authProvider: string;
+  authProviderId: string;
+}
+
 @Injectable()
 export class AuthService {
   constructor(
@@ -28,6 +37,37 @@ export class AuthService {
 
     if (!user) {
       throw new UnauthorizedException('Geçersiz email veya şifre');
+    }
+
+    const payload = {
+      sub: user.id,
+      tenantId: user.tenant.id,
+      role: user.role,
+    };
+
+    return {
+      access_token: await this.jwtService.signAsync(payload),
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        surname: user.surname,
+        tenantId: user.tenant.id,
+        role: user.role,
+      },
+    };
+  }
+
+  async oauthLogin(oauthUser: OAuthUserPayload) {
+    let user = await this.usersService.findByEmail(oauthUser.email);
+
+    if (!user) {
+      // İlk kez giriş yapıyor → yeni tenant + user oluştur
+      user = await this.usersService.createTenantWithOwnerOAuth(oauthUser);
+    }
+
+    if (!user.isActive) {
+      throw new UnauthorizedException('Hesap aktif değil');
     }
 
     const payload = {

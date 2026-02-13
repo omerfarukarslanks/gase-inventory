@@ -19,14 +19,20 @@ export class User extends AuditableEntity {
   @Column({ unique: true })
   email: string;
 
-  @Column()
-  passwordHash: string;
+  @Column({ nullable: true })
+  passwordHash?: string;
 
   @Column()
   name: string;
 
   @Column()
   surname: string;
+
+  @Column({ default: 'local' })
+  authProvider: string; // 'local' | 'google' | 'microsoft'
+
+  @Column({ nullable: true })
+  authProviderId?: string;
 
   @Column({ type: 'timestamp', default: () => 'CURRENT_TIMESTAMP', nullable: true })
   birthDate?: Date;

@@ -11,10 +11,13 @@ import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { MailModule } from 'src/mail/mail.module';
 import { PasswordResetToken } from './password-reset-token';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { GoogleStrategy } from './strategies/google.strategy';
+import { MicrosoftStrategy } from './strategies/microsoft.strategy';
 
 @Module({
     imports: [
     UserModule,
+    ConfigModule,
     PassportModule,
     MailModule,
     TypeOrmModule.forFeature([PasswordResetToken]),
@@ -27,7 +30,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
       }),
     }),
   ],
-  providers: [AuthService, LocalStrategy, JwtStrategy, LoginRateLimitGuard],
+  providers: [AuthService, LocalStrategy, JwtStrategy, GoogleStrategy, MicrosoftStrategy, LoginRateLimitGuard],
   controllers: [AuthController],
 })
 export class AuthModule {}
