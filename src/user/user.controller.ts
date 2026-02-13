@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   UseGuards,
 } from '@nestjs/common';
 import { UsersService } from './user.service';
@@ -13,11 +14,10 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { AssignStoreDto } from './dto/assign-store.dto';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
-import { UserRole } from './user.entity';
+import { User, UserRole } from './user.entity';
 import { StoreUserRole } from './user-store.entity';
-import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
-import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
-import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ListUsersDto, PaginatedUsersResponse } from './dto/list-users.dto';
 
 @ApiTags('Users')
 @ApiBearerAuth('access-token')
@@ -41,8 +41,12 @@ export class UserController {
 
   @Get()
   @ApiOperation({ summary: 'Tenant içindeki tüm kullanıcıları listele' })
-  findAll() {
-    return this.usersService.listUsersForTenant();
+  @ApiOkResponse({
+    description: 'Paginated list of users',
+    type: PaginatedUsersResponse,
+  })
+  findAll(@Query() query: ListUsersDto): Promise<PaginatedUsersResponse> {
+    return this.usersService.listUsersForTenant(query);
   }
 
   @Get(':id')

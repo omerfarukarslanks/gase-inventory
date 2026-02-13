@@ -44,19 +44,22 @@ export class StoresService {
   async findAll(query: ListStoresQueryDto, manager?: EntityManager): Promise<PaginatedStoresResponse> {
     const repo = this.getRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const { page, limit, skip, search, sortBy, sortOrder } = query;
 
     const qb = repo
       .createQueryBuilder('store')
-      .where('store.tenantId = :tenantId', { tenantId })
-      .orderBy('store.createdAt', 'DESC')
-      .skip(query.offset)
-      .take(query.limit);
+      .where('store.tenantId = :tenantId', { tenantId });
 
-    if (query.cursor) {
-      qb.andWhere('store.createdAt < :cursor', {
-        cursor: new Date(query.cursor),
-      });
+    if (search) {
+      qb.andWhere(
+        '(store.name ILIKE :search OR store.code ILIKE :search OR store.slug ILIKE :search)',
+        { search: `%${search}%` },
+      );
     }
+
+    qb.orderBy(`store.${sortBy}`, sortOrder)
+      .skip(skip)
+      .take(limit);
 
     const [data, total] = await qb.getManyAndCount();
 
@@ -64,10 +67,9 @@ export class StoresService {
       data,
       meta: {
         total,
-        limit: query.limit,
-        offset: query.offset,
-        hasMore: query.offset + data.length < total,
-        cursor: query.cursor,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }

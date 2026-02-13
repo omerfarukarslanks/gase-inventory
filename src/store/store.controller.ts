@@ -13,10 +13,8 @@ import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { StoresService } from './store.service';
 import { CreateStoreDto } from './dto/create-store.dto';
 import { UpdateStoreDto } from './dto/update-store.dto';
-import { ListStoresQueryDto } from './dto/list-stores.dto';
-import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
-import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
-import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
+import { ApiOkResponse, ApiBearerAuth, ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ListStoresQueryDto, PaginatedStoresResponse } from './dto/list-stores.dto';
 
 @ApiTags('Stores')
 @ApiBearerAuth('access-token')
@@ -33,6 +31,10 @@ export class StoreController {
 
   @Get()
   @ApiOperation({ summary: 'Mevcut tenant için tüm mağazaları listele' })
+  @ApiOkResponse({
+    description: 'Paginated list of stores',
+    type: PaginatedStoresResponse,
+  })
   findAll(@Query() query: ListStoresQueryDto) {
     return this.storesService.findAll(query);
   }
