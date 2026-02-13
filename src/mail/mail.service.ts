@@ -1,21 +1,26 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class MailService {
-  private transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT ?? 587),
-    secure: false,
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
+  private transporter: nodemailer.Transporter;
+
+  constructor(private readonly config: ConfigService) {
+    this.transporter = nodemailer.createTransport({
+      host: this.config.get<string>('SMTP_HOST'),
+      port: this.config.get<number>('SMTP_PORT', 587),
+      secure: false,
+      auth: {
+        user: this.config.get<string>('SMTP_USER'),
+        pass: this.config.get<string>('SMTP_PASS'),
+      },
+    });
+  }
 
   async sendPasswordResetEmail(to: string, resetUrl: string) {
     await this.transporter.sendMail({
-      from: process.env.MAIL_FROM ?? 'no-reply@yourapp.com',
+      from: this.config.get<string>('MAIL_FROM', 'Gase Inventory <no-reply@gase.com>'),
       to,
       subject: 'Şifre Sıfırlama',
       html: `
