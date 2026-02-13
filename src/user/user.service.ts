@@ -1,17 +1,18 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, ILike, Repository } from 'typeorm';
 import { User, UserRole } from './user.entity';
 import { UserStore, StoreUserRole } from './user-store.entity';
 import { TenantsService } from 'src/tenant/tenant.service';
 import { StoresService } from 'src/store/store.service';
-import * as bcrypt from 'bcrypt'
+import * as bcrypt from 'bcrypt';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { slugify } from 'src/common/utils/slugify';
 import { UserErrors } from 'src/common/errors/user.errors';
 import { Store } from 'src/store/store.entity';
 import { generateRandomStoreName } from 'src/common/utils/random-store-name';
 import { StoreErrors } from 'src/common/errors/store.errors';
+import { ListUsersDto, PaginatedUsersResponse } from './dto/list-users.dto';
 
 @Injectable()
 export class UsersService {
@@ -402,14 +403,61 @@ export class UsersService {
   }
 
   // Tenant içindeki tüm kullanıcıları listele
-  async listUsersForTenant(): Promise<User[]> {
+  async listUsersForTenant(
+    query: ListUsersDto,
+  ): Promise<PaginatedUsersResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const { page, limit, search, sortBy, sortOrder, skip } = query;
 
-    return this.userRepo.find({
-      where: { tenant: { id: tenantId } },
-      relations: ['userStores', 'userStores.store'],
-      order: { createdAt: 'DESC' },
-    });
+    // 1. Adım: Ana sorguyu oluştur (JOIN'lar olmadan)
+    const qb = this.userRepo
+      .createQueryBuilder('user')
+      .where('user.tenantId = :tenantId', { tenantId });
+
+    // Arama koşulunu ekle
+    if (search) {
+      qb.andWhere(
+        '(user.name ILIKE :search OR user.surname ILIKE :search OR user.email ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    // 2. Adım: Toplam sayıyı ve bu sayfadaki ID'leri al
+    const countQb = qb.clone(); // Sayım için sorguyu klonla
+    const total = await countQb.getCount();
+
+    const paginatedQb = qb
+      .orderBy(`user.${sortBy}`, sortOrder)
+      .skip(skip)
+      .take(limit);
+
+    const userIds = (await paginatedQb.getMany()).map((user) => user.id);
+
+    if (userIds.length === 0) {
+      return {
+        data: [],
+        meta: { total, limit, page, totalPages: Math.ceil(total / limit) },
+      };
+    }
+
+    // 3. Adım: ID'leri alınan kullanıcıların tam verisini ilişkilerle birlikte çek
+    const data = await this.userRepo
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.userStores', 'userStores')
+      .leftJoinAndSelect('userStores.store', 'store')
+      .where('user.id IN (:...userIds)', { userIds })
+      .orderBy(`user.${sortBy}`, sortOrder) // Sıralamayı koru
+      .getMany();
+
+    return {
+      data: data,
+      meta: {
+        total,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   // Belirli bir mağazaya atanmış kullanıcıları listele
