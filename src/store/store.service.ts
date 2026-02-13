@@ -52,7 +52,7 @@ export class StoresService {
 
     if (search) {
       qb.andWhere(
-        '(store.name ILIKE :search OR store.code ILIKE :search OR store.slug ILIKE :search)',
+        '(store.name ILIKE :search OR store.code ILIKE :search OR store.slug ILIKE :search OR store.address ILIKE :search OR store.description ILIKE :search)',
         { search: `%${search}%` },
       );
     }
