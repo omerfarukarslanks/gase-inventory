@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsOptional } from 'class-validator';
+import { Transform } from 'class-transformer';
+import { IsEnum, IsIn, IsOptional } from 'class-validator';
 import { User } from '../user.entity';
 import { PaginationQueryDto, SortOrder } from '../../common/dto/pagination.dto';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
@@ -13,6 +14,7 @@ export enum ListUsersSortBy {
 }
 
 export { SortOrder }; // Re-export for compatibility if needed, though usually used from shared DTO
+export type ActiveFilter = boolean | 'all';
 
 export class ListUsersDto extends PaginationQueryDto {
   @ApiPropertyOptional({
@@ -23,6 +25,21 @@ export class ListUsersDto extends PaginationQueryDto {
   @IsEnum(ListUsersSortBy)
   @IsOptional()
   public sortBy: string = ListUsersSortBy.CREATED_AT;
+
+  @ApiPropertyOptional({
+    description: 'Aktiflik filtresi (true, false, all)',
+    example: 'all',
+    enum: ['all', true, false],
+  })
+  @Transform(({ value }) => {
+    if (value === 'all') return 'all';
+    if (value === 'true' || value === true) return true;
+    if (value === 'false' || value === false) return false;
+    return value;
+  })
+  @IsIn(['all', true, false])
+  @IsOptional()
+  isActive?: ActiveFilter;
 }
 
 export class PaginatedUsersResponse extends PaginatedResponseDto<User> {

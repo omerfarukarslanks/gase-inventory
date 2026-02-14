@@ -62,7 +62,7 @@ export class UserController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Kullanıcı sil' })
+  @ApiOperation({ summary: 'Kullanıcıyı pasife al (soft delete)' })
   remove(@Param('id') id: string) {
     return this.usersService.deleteUser(id);
   }

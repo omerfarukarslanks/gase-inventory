@@ -52,7 +52,7 @@ export class StoreController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Belirli bir mağazayı sil' })
+  @ApiOperation({ summary: 'Belirli bir mağazayı pasife al (soft delete)' })
   remove(@Param('id') id: string) {
     return this.storesService.remove(id);
   }

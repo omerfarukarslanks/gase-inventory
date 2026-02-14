@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -10,12 +11,14 @@ import { ProductVariant } from './product-variant.entity';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateVariantDto } from './dto/create-variant.dto';
+import { UpdateVariantDto } from './dto/update-variant.dto';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { ProductErrors } from 'src/common/errors/product.errors';
 import {
-  ListProductsQueryDto,
+  ListProductsDto,
   PaginatedProductsResponse,
 } from './dto/list-products.dto';
+import { ListVariantsDto } from './dto/list-variants.dto';
 
 @Injectable()
 export class ProductService {
@@ -53,11 +56,41 @@ export class ProductService {
   }
 
   async findAll(
-    query: ListProductsQueryDto,
+    query: ListProductsDto,
     manager?: EntityManager,
   ): Promise<PaginatedProductsResponse> {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const {
+      page,
+      limit,
+      search,
+      sortBy,
+      sortOrder,
+      skip,
+      defaultCurrency,
+      defaultSalePriceMin,
+      defaultSalePriceMax,
+      defaultPurchasePriceMin,
+      defaultPurchasePriceMax,
+      isActive,
+    } = query;
+
+    if (
+      defaultSalePriceMin !== undefined &&
+      defaultSalePriceMax !== undefined &&
+      defaultSalePriceMin > defaultSalePriceMax
+    ) {
+      throw new BadRequestException('defaultSalePriceMin, defaultSalePriceMax değerinden büyük olamaz');
+    }
+
+    if (
+      defaultPurchasePriceMin !== undefined &&
+      defaultPurchasePriceMax !== undefined &&
+      defaultPurchasePriceMin > defaultPurchasePriceMax
+    ) {
+      throw new BadRequestException('defaultPurchasePriceMin, defaultPurchasePriceMax değerinden büyük olamaz');
+    }
 
     const qb = repo
       .createQueryBuilder('product')
@@ -77,27 +110,63 @@ export class ProductService {
         'product.updatedAt',
       ])
       .where('product.tenantId = :tenantId', { tenantId })
-      .orderBy('product.createdAt', 'DESC')
-      .skip(query.offset)
-      .take(query.limit)
+      .orderBy(`product.${sortBy}`, sortOrder)
+      .skip(skip)
+      .take(limit)
       .loadRelationCountAndMap('product.variantCount', 'product.variants');
 
-    if (query.cursor) {
-      qb.andWhere('product.createdAt < :cursor', {
-        cursor: new Date(query.cursor),
+    if (search) {
+      qb.andWhere(
+        '(product.name ILIKE :search OR product.sku ILIKE :search OR product.description ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    if (defaultCurrency) {
+      qb.andWhere('UPPER(product.defaultCurrency) = UPPER(:defaultCurrency)', {
+        defaultCurrency,
       });
     }
 
-    const [products, total] = await qb.getManyAndCount();
+    if (defaultSalePriceMin !== undefined) {
+      qb.andWhere('product.defaultSalePrice >= :defaultSalePriceMin', {
+        defaultSalePriceMin,
+      });
+    }
+
+    if (defaultSalePriceMax !== undefined) {
+      qb.andWhere('product.defaultSalePrice <= :defaultSalePriceMax', {
+        defaultSalePriceMax,
+      });
+    }
+
+    if (defaultPurchasePriceMin !== undefined) {
+      qb.andWhere('product.defaultPurchasePrice >= :defaultPurchasePriceMin', {
+        defaultPurchasePriceMin,
+      });
+    }
+
+    if (defaultPurchasePriceMax !== undefined) {
+      qb.andWhere('product.defaultPurchasePrice <= :defaultPurchasePriceMax', {
+        defaultPurchasePriceMax,
+      });
+    }
+
+    if (isActive !== undefined && isActive !== 'all') {
+      qb.andWhere('product.isActive = :isActive', { isActive });
+    }
+
+    const countQb = qb.clone();
+    const total = await countQb.getCount();
+    const products = await qb.getMany();
 
     return {
       data: products,
       meta: {
         total,
-        limit: query.limit,
-        offset: query.offset,
-        hasMore: query.offset + products.length < total,
-        cursor: query.cursor,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }
@@ -150,44 +219,62 @@ export class ProductService {
   async remove(id: string, manager?: EntityManager): Promise<void> {
     const repo = this.getProductRepo(manager);
     const product = await this.findOne(id, manager);
-    await repo.remove(product);
+    const userId = this.appContext.getUserIdOrThrow();
+
+    product.isActive = false;
+    product.updatedById = userId;
+    await repo.save(product);
   }
 
   // ---------- Variant işlemleri ----------
 
-  async addVariant(
+  async addVariants(
     productId: string,
-    dto: CreateVariantDto,
+    dtos: CreateVariantDto[],
     manager?: EntityManager,
-  ): Promise<ProductVariant> {
+  ): Promise<ProductVariant[]> {
     if (manager) {
-      return this.addVariantInternal(productId, dto, manager);
+      return this.addVariantsInternal(productId, dtos, manager);
     }
 
     return this.dataSource.transaction((txManager) =>
-      this.addVariantInternal(productId, dto, txManager),
+      this.addVariantsInternal(productId, dtos, txManager),
     );
   }
 
-  private async addVariantInternal(
+  private async addVariantsInternal(
     productId: string,
-    dto: CreateVariantDto,
+    dtos: CreateVariantDto[],
     manager: EntityManager,
-  ): Promise<ProductVariant> {
+  ): Promise<ProductVariant[]> {
     const variantRepo = this.getVariantRepo(manager);
     const product = await this.findOne(productId, manager);
 
-    const variant = variantRepo.create({
-      ...dto,
-      product,
-    });
-    return variantRepo.save(variant);
+    const variants = dtos.map((dto) =>
+      variantRepo.create({
+        ...dto,
+        product,
+      }),
+    );
+    return variantRepo.save(variants);
   }
 
-  async listVariants(productId: string, manager?: EntityManager): Promise<ProductVariant[]> {
+  async listVariants(
+    productId: string,
+    query?: ListVariantsDto,
+    manager?: EntityManager,
+  ): Promise<ProductVariant[]> {
     const repo = this.getVariantRepo(manager);
     const product = await this.findOne(productId, manager);
-    const variant = repo.find({
+    const isActive = query?.isActive ?? 'all';
+    const where: any = {
+      product: { id: product.id },
+    };
+
+    if (isActive !== 'all') {
+      where.isActive = isActive;
+    }
+    const variants = await repo.find({
       select: {
         id: true,
         name: true,
@@ -200,8 +287,57 @@ export class ProductService {
         updatedById: true,
         isActive: true,
       },
-      where: { product: { id: product.id } },
+      where,
       order: { createdAt: 'DESC' },
+    });
+
+    return variants;
+  }
+
+  async updateVariant(
+    productId: string,
+    variantId: string,
+    dto: UpdateVariantDto,
+    manager?: EntityManager,
+  ): Promise<ProductVariant> {
+    const repo = this.getVariantRepo(manager);
+    const userId = this.appContext.getUserIdOrThrow();
+    const variant = await this.findVariantByProductOrThrow(productId, variantId, manager);
+
+    Object.assign(variant, dto, {
+      updatedById: userId,
+    });
+
+    return repo.save(variant);
+  }
+
+  async removeVariant(
+    productId: string,
+    variantId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repo = this.getVariantRepo(manager);
+    const userId = this.appContext.getUserIdOrThrow();
+    const variant = await this.findVariantByProductOrThrow(productId, variantId, manager);
+
+    variant.isActive = false;
+    variant.updatedById = userId;
+    await repo.save(variant);
+  }
+
+  private async findVariantByProductOrThrow(
+    productId: string,
+    variantId: string,
+    manager?: EntityManager,
+  ): Promise<ProductVariant> {
+    const repo = this.getVariantRepo(manager);
+    await this.findOne(productId, manager);
+
+    const variant = await repo.findOne({
+      where: {
+        id: variantId,
+        product: { id: productId },
+      },
     });
 
     if (!variant) {

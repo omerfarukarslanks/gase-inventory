@@ -44,7 +44,7 @@ export class StoresService {
   async findAll(query: ListStoresQueryDto, manager?: EntityManager): Promise<PaginatedStoresResponse> {
     const repo = this.getRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
-    const { page, limit, skip, search, sortBy, sortOrder } = query;
+    const { page, limit, skip, search, sortBy, sortOrder, isActive } = query;
 
     const qb = repo
       .createQueryBuilder('store')
@@ -55,6 +55,10 @@ export class StoresService {
         '(store.name ILIKE :search OR store.code ILIKE :search OR store.slug ILIKE :search OR store.address ILIKE :search OR store.description ILIKE :search)',
         { search: `%${search}%` },
       );
+    }
+
+    if (isActive !== undefined && isActive !== 'all') {
+      qb.andWhere('store.isActive = :isActive', { isActive });
     }
 
     qb.orderBy(`store.${sortBy}`, sortOrder)

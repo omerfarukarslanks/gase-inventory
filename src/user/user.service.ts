@@ -464,7 +464,7 @@ export class UsersService {
     query: ListUsersDto,
   ): Promise<PaginatedUsersResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
-    const { page, limit, search, sortBy, sortOrder, skip } = query;
+    const { page, limit, search, sortBy, sortOrder, skip, isActive } = query;
 
     // 1. Adım: Ana sorguyu oluştur (JOIN'lar olmadan)
     const qb = this.userRepo
@@ -477,6 +477,10 @@ export class UsersService {
         '(user.name ILIKE :search OR user.surname ILIKE :search OR user.email ILIKE :search)',
         { search: `%${search}%` },
       );
+    }
+
+    if (isActive !== undefined && isActive !== 'all') {
+      qb.andWhere('user.isActive = :isActive', { isActive });
     }
 
     // 2. Adım: Toplam sayıyı ve bu sayfadaki ID'leri al
@@ -538,10 +542,10 @@ export class UsersService {
 
   async deleteUser(userId: string): Promise<void> {
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const actorUserId = this.appContext.getUserIdOrThrow();
 
     return this.dataSource.transaction(async (manager: EntityManager) => {
       const userRepo = manager.getRepository(User);
-      const userStoreRepo = manager.getRepository(UserStore);
 
       const user = await userRepo.findOne({
         where: { id: userId, tenant: { id: tenantId } },
@@ -551,8 +555,9 @@ export class UsersService {
         throw new NotFoundException(UserErrors.USER_NOT_FOUND);
       }
 
-      await userStoreRepo.delete({ user: { id: userId } });
-      await userRepo.remove(user);
+      user.isActive = false;
+      user.updatedById = actorUserId;
+      await userRepo.save(user);
     });
   }
 

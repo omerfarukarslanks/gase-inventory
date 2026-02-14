@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseArrayPipe,
   ParseUUIDPipe,
   Patch,
   Post,
@@ -13,12 +14,15 @@ import {
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { CreateVariantDto } from './dto/create-variant.dto';
+import { UpdateVariantDto } from './dto/update-variant.dto';
+import { ListVariantsDto } from './dto/list-variants.dto';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { ProductService } from './product.service';
 import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
 import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
 import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
-import { ListProductsQueryDto } from './dto/list-products.dto';
+import { ListProductsDto } from './dto/list-products.dto';
+import { ApiBody } from '@nestjs/swagger';
 
 @ApiTags('Products')
 @ApiBearerAuth('access-token') // DocumentBuilder içindeki key
@@ -37,7 +41,7 @@ export class ProductController {
 
   @Get()
   @ApiOperation({ summary: 'Mevcut tenant için tüm ürünleri listele' })
-  findAll(@Query() query: ListProductsQueryDto) {
+  findAll(@Query() query: ListProductsDto) {
     return this.productsService.findAll(query);
   }
 
@@ -57,7 +61,7 @@ export class ProductController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Belirli bir ürünü sil' })
+  @ApiOperation({ summary: 'Belirli bir ürünü pasife al (soft delete)' })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);
   }
@@ -65,17 +69,40 @@ export class ProductController {
   // ---------- Variant endpoints ----------
 
   @Post(':id/variants')
-  @ApiOperation({ summary: 'Ürüne varyant ekle' })
+  @ApiOperation({ summary: 'Ürüne varyant(lar) ekle' })
+  @ApiBody({ type: CreateVariantDto, isArray: true })
   addVariant(
     @Param('id', ParseUUIDPipe) productId: string,
-    @Body() dto: CreateVariantDto,
+    @Body(new ParseArrayPipe({ items: CreateVariantDto })) dtos: CreateVariantDto[],
   ) {
-    return this.productsService.addVariant(productId, dto);
+    return this.productsService.addVariants(productId, dtos);
   }
 
   @Get(':id/variants')
-  @ApiOperation({ summary: 'Ürünün tüm varyantlarını listele' })
-  listVariants(@Param('id', ParseUUIDPipe) productId: string) {
-    return this.productsService.listVariants(productId);
+  @ApiOperation({ summary: 'Ürünün varyantlarını listele (varsayılan: aktif)' })
+  listVariants(
+    @Param('id', ParseUUIDPipe) productId: string,
+    @Query() query: ListVariantsDto,
+  ) {
+    return this.productsService.listVariants(productId, query);
+  }
+
+  @Patch(':id/variants/:variantId')
+  @ApiOperation({ summary: 'Ürün varyantını güncelle' })
+  updateVariant(
+    @Param('id', ParseUUIDPipe) productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+    @Body() dto: UpdateVariantDto,
+  ) {
+    return this.productsService.updateVariant(productId, variantId, dto);
+  }
+
+  @Delete(':id/variants/:variantId')
+  @ApiOperation({ summary: 'Ürün varyantını pasife al (soft delete)' })
+  removeVariant(
+    @Param('id', ParseUUIDPipe) productId: string,
+    @Param('variantId', ParseUUIDPipe) variantId: string,
+  ) {
+    return this.productsService.removeVariant(productId, variantId);
   }
 }
