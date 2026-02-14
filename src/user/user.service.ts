@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, ILike, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { User, UserRole } from './user.entity';
 import { UserStore, StoreUserRole } from './user-store.entity';
 import { TenantsService } from 'src/tenant/tenant.service';
@@ -464,7 +464,7 @@ export class UsersService {
     query: ListUsersDto,
   ): Promise<PaginatedUsersResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
-    const { page, limit, search, sortBy, sortOrder, skip, isActive } = query;
+    const { page, limit, search, sortBy, sortOrder, skip, isActive, storeId } = query;
 
     // 1. Adım: Ana sorguyu oluştur (JOIN'lar olmadan)
     const qb = this.userRepo
@@ -481,6 +481,27 @@ export class UsersService {
 
     if (isActive !== undefined && isActive !== 'all') {
       qb.andWhere('user.isActive = :isActive', { isActive });
+    }
+
+    if (storeId) {
+      const storeExists = await this.storeRepo.exists({
+        where: { id: storeId, tenant: { id: tenantId } },
+      });
+      if (!storeExists) {
+        throw new NotFoundException(StoreErrors.STORE_NOT_IN_TENANT);
+      }
+
+      qb.andWhere((subQb) => {
+        const subQuery = subQb
+          .subQuery()
+          .select('1')
+          .from(UserStore, 'us')
+          .where('us.userId = user.id')
+          .andWhere('us.storeId = :storeId')
+          .getQuery();
+        return `EXISTS ${subQuery}`;
+      });
+      qb.setParameter('storeId', storeId);
     }
 
     // 2. Adım: Toplam sayıyı ve bu sayfadaki ID'leri al

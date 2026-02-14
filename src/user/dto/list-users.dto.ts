@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsEnum, IsIn, IsOptional } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsUUID } from 'class-validator';
 import { User } from '../user.entity';
 import { PaginationQueryDto, SortOrder } from '../../common/dto/pagination.dto';
 import { PaginatedResponseDto } from '../../common/dto/paginated-response.dto';
@@ -40,6 +40,14 @@ export class ListUsersDto extends PaginationQueryDto {
   @IsIn(['all', true, false])
   @IsOptional()
   isActive?: ActiveFilter;
+
+  @ApiPropertyOptional({
+    description: 'Mağaza bazlı kullanıcı filtresi',
+    format: 'uuid',
+  })
+  @IsUUID('4')
+  @IsOptional()
+  storeId?: string;
 }
 
 export class PaginatedUsersResponse extends PaginatedResponseDto<User> {
