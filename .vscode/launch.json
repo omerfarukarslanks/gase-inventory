@@ -6,7 +6,7 @@
       "request": "launch",
       "name": "Debug NestJS (direct)",
       "program": "${workspaceFolder}/node_modules/@nestjs/cli/bin/nest.js",
-      "args": ["start", "--watch", "--debug", "5000"],
+      "args": ["start", "--watch", "--debug", "8080"],
       "cwd": "${workspaceFolder}",
       "console": "integratedTerminal",
       "restart": true,

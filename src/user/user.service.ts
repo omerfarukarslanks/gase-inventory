@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, ILike, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, ILike, Repository } from 'typeorm';
 import { User, UserRole } from './user.entity';
 import { UserStore, StoreUserRole } from './user-store.entity';
 import { TenantsService } from 'src/tenant/tenant.service';
@@ -310,27 +310,84 @@ export class UsersService {
       surname?: string;
       role?: UserRole;
       isActive?: boolean;
+      storeIds?: string[];
     },
   ): Promise<User> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const actorUserId = this.appContext.getUserIdOrThrow();
 
-    const user = await this.userRepo.findOne({
-      where: { id: userId, tenant: { id: tenantId } },
+    return this.dataSource.transaction(async (manager: EntityManager) => {
+      const userRepo = manager.getRepository(User);
+      const userStoreRepo = manager.getRepository(UserStore);
+      const storeRepo = manager.getRepository(Store);
+
+      const user = await userRepo.findOne({
+        where: { id: userId, tenant: { id: tenantId } },
+      });
+
+      if (!user) {
+        throw new NotFoundException(UserErrors.USER_NOT_FOUND);
+      }
+
+      if (input.name !== undefined) user.name = input.name;
+      if (input.surname !== undefined) user.surname = input.surname;
+      if (input.role !== undefined) user.role = input.role;
+      if (input.isActive !== undefined) user.isActive = input.isActive;
+
+      user.updatedById = actorUserId;
+      const savedUser = await userRepo.save(user);
+
+      if (input.storeIds !== undefined) {
+        const normalizedStoreIds = Array.from(new Set(input.storeIds));
+
+        const stores = normalizedStoreIds.length
+          ? await storeRepo.find({
+              where: {
+                id: In(normalizedStoreIds),
+                tenant: { id: tenantId },
+              },
+            })
+          : [];
+
+        if (stores.length !== normalizedStoreIds.length) {
+          throw new NotFoundException(StoreErrors.STORE_NOT_IN_TENANT);
+        }
+
+        const currentUserStores = await userStoreRepo.find({
+          where: {
+            user: { id: userId },
+            store: { tenant: { id: tenantId } },
+          },
+          relations: ['store'],
+        });
+
+        const currentStoreIds = new Set(
+          currentUserStores.map((userStore) => userStore.store.id),
+        );
+        const nextStoreIds = new Set(normalizedStoreIds);
+
+        const toRemove = currentUserStores.filter(
+          (userStore) => !nextStoreIds.has(userStore.store.id),
+        );
+        if (toRemove.length) {
+          await userStoreRepo.remove(toRemove);
+        }
+
+        const toAdd = stores.filter((store) => !currentStoreIds.has(store.id));
+        for (const store of toAdd) {
+          const userStore = userStoreRepo.create({
+            user: savedUser,
+            store,
+            role: StoreUserRole.MANAGER,
+            createdById: actorUserId,
+            updatedById: actorUserId,
+          });
+          await userStoreRepo.save(userStore);
+        }
+      }
+
+      return savedUser;
     });
-
-    if (!user) {
-      throw new NotFoundException(UserErrors.USER_NOT_FOUND);
-    }
-
-    if (input.name !== undefined) user.name = input.name;
-    if (input.surname !== undefined) user.surname = input.surname;
-    if (input.role !== undefined) user.role = input.role;
-    if (input.isActive !== undefined) user.isActive = input.isActive;
-
-    user.updatedById = actorUserId;
-
-    return this.userRepo.save(user);
   }
 
   // Kullanıcıyı mağazaya ata

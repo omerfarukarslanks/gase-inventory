@@ -53,6 +53,6 @@ async function bootstrap() {
   });
   // ---- Swagger bitti ----
 
-  await app.listen(process.env.APP_PORT ?? process.env.PORT ?? 5000);
+  await app.listen(process.env.APP_PORT ?? process.env.PORT ?? 8080);
 }
 bootstrap();
