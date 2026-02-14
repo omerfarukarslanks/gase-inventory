@@ -6,6 +6,7 @@ import { InventoryController } from './inventory.controller';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { StoreVariantStock } from './store-variant-stock.entity';
+import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 
 @Module({
   imports: [
@@ -14,6 +15,7 @@ import { StoreVariantStock } from './store-variant-stock.entity';
       Store,
       ProductVariant,
       StoreVariantStock,
+      StoreProductPrice,
     ]),
   ],
   providers: [InventoryService],

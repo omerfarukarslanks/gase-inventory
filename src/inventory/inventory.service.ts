@@ -21,6 +21,7 @@ import { Tenant } from 'src/tenant/tenant.entity';
 import { ListMovementsQueryDto, PaginatedMovementsResponse } from './dto/list-movements.dto';
 import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
+import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 
 @Injectable()
 export class InventoryService {
@@ -35,6 +36,8 @@ export class InventoryService {
     private readonly storeRepo: Repository<Store>,
     @InjectRepository(ProductVariant)
     private readonly variantRepo: Repository<ProductVariant>,
+    @InjectRepository(StoreProductPrice)
+    private readonly storeProductPriceRepo: Repository<StoreProductPrice>,
     private readonly appContext: AppContextService,
   ) {}
 
@@ -139,6 +142,7 @@ export class InventoryService {
     variantId: string,
     manager?: EntityManager,
     lock = false,
+    initializeWithMovementSum = true,
   ): Promise<StoreVariantStock> {
     const repo = this.getStockSummaryRepository(manager);
 
@@ -155,12 +159,14 @@ export class InventoryService {
     let summary = await qb.getOne();
 
     if (!summary) {
-      const quantity = await this.calculateMovementSum(
-        tenantId,
-        storeId,
-        variantId,
-        manager,
-      );
+      const quantity = initializeWithMovementSum
+        ? await this.calculateMovementSum(
+            tenantId,
+            storeId,
+            variantId,
+            manager,
+          )
+        : 0;
 
       const userId = this.getUserIdOrThrow();
 
@@ -193,6 +199,7 @@ export class InventoryService {
       variantId,
       manager,
       true,
+      false,
     );
 
     summary.quantity = Number(summary.quantity) + quantityDelta;
@@ -612,26 +619,101 @@ export class InventoryService {
    */
   async getStoreStockSummary(storeId: string, manager?: EntityManager): Promise<
     {
-      productVariantId: string;
-      quantity: number;
-    }[]
+      items: {
+        productId: string;
+        productName: string;
+        productVariantId: string;
+        variantName: string;
+        variantCode: string;
+        quantity: number;
+        salePrice: number | null;
+        purchasePrice: number | null;
+        currency: string;
+        taxPercent: number | null;
+        discountPercent: number | null;
+        isStoreOverride: boolean;
+      }[];
+      totalQuantity: number;
+      storeId: string;
+      storeName: string;
+    }
   > {
     const tenantId = this.getTenantIdOrThrow();
-    await this.getTenantStoreOrThrow(storeId, manager);
+    const store = await this.getTenantStoreOrThrow(storeId, manager);
     const repo = this.getStockSummaryRepository(manager);
+    const sppTableName = this.storeProductPriceRepo.metadata.tableName;
 
     const rows = await repo
       .createQueryBuilder('s')
-      .select('s.productVariantId', 'productVariantId')
+      .innerJoin('s.productVariant', 'variant')
+      .innerJoin('variant.product', 'product')
+      .innerJoin('s.store', 'store')
+      .leftJoin(
+        sppTableName,
+        'spp',
+        [
+          'spp."tenantId" = s."tenantId"',
+          'spp."storeId" = s."storeId"',
+          'spp."productVariantId" = s."productVariantId"',
+          'spp."isActive" = true',
+        ].join(' AND '),
+      )
+      .select('product.id', 'productId')
+      .addSelect('product.name', 'productName')
+      .addSelect('s.productVariantId', 'productVariantId')
+      .addSelect('variant.name', 'variantName')
+      .addSelect('variant.code', 'variantCode')
+      .addSelect('store.id', 'storeId')
+      .addSelect('store.name', 'storeName')
       .addSelect('s.quantity', 'quantity')
+      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'salePrice')
+      .addSelect('COALESCE(spp."purchasePrice", variant."defaultPurchasePrice")', 'purchasePrice')
+      .addSelect('COALESCE(spp."currency", variant."defaultCurrency", \'TRY\')', 'currency')
+      .addSelect('COALESCE(spp."taxPercent", variant."defaultTaxPercent")', 'taxPercent')
+      .addSelect('spp."discountPercent"', 'discountPercent')
+      .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
       .where('s.tenantId = :tenantId', { tenantId })
       .andWhere('s.storeId = :storeId', { storeId })
-      .getRawMany<{ productVariantId: string; quantity: string }>();
+      .orderBy('product.name', 'ASC')
+      .addOrderBy('variant.name', 'ASC')
+      .getRawMany<{
+        productId: string;
+        productName: string;
+        productVariantId: string;
+        variantName: string;
+        variantCode: string;
+        storeId: string;
+        storeName: string;
+        quantity: string;
+        salePrice: string | null;
+        purchasePrice: string | null;
+        currency: string | null;
+        taxPercent: string | null;
+        discountPercent: string | null;
+        isStoreOverride: boolean | string;
+      }>();
 
-    return rows.map((r) => ({
-      productVariantId: r.productVariantId,
-      quantity: Number(r.quantity),
+    const items = rows.map((row) => ({
+      productId: row.productId,
+      productName: row.productName,
+      productVariantId: row.productVariantId,
+      variantName: row.variantName,
+      variantCode: row.variantCode,
+      quantity: Number(row.quantity),
+      salePrice: row.salePrice !== null ? Number(row.salePrice) : null,
+      purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
+      currency: row.currency ?? 'TRY',
+      taxPercent: row.taxPercent !== null ? Number(row.taxPercent) : null,
+      discountPercent: row.discountPercent !== null ? Number(row.discountPercent) : null,
+      isStoreOverride: row.isStoreOverride === true || row.isStoreOverride === 'true',
     }));
+
+    return {
+      items,
+      totalQuantity: items.reduce((sum, item) => sum + item.quantity, 0),
+      storeId: store.id,
+      storeName: store.name,
+    };
   }
 
     /**
@@ -643,26 +725,142 @@ export class InventoryService {
     manager?: EntityManager,
   ): Promise<
     {
-      productVariantId: string;
-      quantity: number;
-    }[]
+      items: {
+        productId: string;
+        productName: string;
+        productVariantId: string;
+        variantName: string;
+        variantCode: string;
+        totalQuantity: number;
+        stores: {
+          storeId: string;
+          storeName: string;
+          quantity: number;
+          salePrice: number | null;
+          purchasePrice: number | null;
+          currency: string;
+          taxPercent: number | null;
+          discountPercent: number | null;
+          isStoreOverride: boolean;
+        }[];
+      }[];
+      totalQuantity: number;
+    }
   > {
     const tenantId = this.getTenantIdOrThrow();
 
     const repo = this.getStockSummaryRepository(manager);
+    const sppTableName = this.storeProductPriceRepo.metadata.tableName;
 
     const rows = await repo
       .createQueryBuilder('s')
-      .select('s.productVariantId', 'productVariantId')
-      .addSelect('COALESCE(SUM(s.quantity), 0)', 'quantity')
+      .innerJoin('s.productVariant', 'variant')
+      .innerJoin('variant.product', 'product')
+      .innerJoin('s.store', 'store')
+      .leftJoin(
+        sppTableName,
+        'spp',
+        [
+          'spp."tenantId" = s."tenantId"',
+          'spp."storeId" = s."storeId"',
+          'spp."productVariantId" = s."productVariantId"',
+          'spp."isActive" = true',
+        ].join(' AND '),
+      )
+      .select('product.id', 'productId')
+      .addSelect('product.name', 'productName')
+      .addSelect('s.productVariantId', 'productVariantId')
+      .addSelect('variant.name', 'variantName')
+      .addSelect('variant.code', 'variantCode')
+      .addSelect('store.id', 'storeId')
+      .addSelect('store.name', 'storeName')
+      .addSelect('s.quantity', 'quantity')
+      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'salePrice')
+      .addSelect('COALESCE(spp."purchasePrice", variant."defaultPurchasePrice")', 'purchasePrice')
+      .addSelect('COALESCE(spp."currency", variant."defaultCurrency", \'TRY\')', 'currency')
+      .addSelect('COALESCE(spp."taxPercent", variant."defaultTaxPercent")', 'taxPercent')
+      .addSelect('spp."discountPercent"', 'discountPercent')
+      .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
       .where('s.tenantId = :tenantId', { tenantId })
-      .groupBy('s.productVariantId')
-      .getRawMany<{ productVariantId: string; quantity: string }>();
+      .orderBy('product.name', 'ASC')
+      .addOrderBy('variant.name', 'ASC')
+      .addOrderBy('store.name', 'ASC')
+      .getRawMany<{
+        productId: string;
+        productName: string;
+        productVariantId: string;
+        variantName: string;
+        variantCode: string;
+        storeId: string;
+        storeName: string;
+        quantity: string;
+        salePrice: string | null;
+        purchasePrice: string | null;
+        currency: string | null;
+        taxPercent: string | null;
+        discountPercent: string | null;
+        isStoreOverride: boolean | string;
+      }>();
 
-    return rows.map((r) => ({
-      productVariantId: r.productVariantId,
-      quantity: Number(r.quantity),
-    }));
+    const byVariant = new Map<
+      string,
+      {
+        productId: string;
+        productName: string;
+        productVariantId: string;
+        variantName: string;
+        variantCode: string;
+        totalQuantity: number;
+        stores: {
+          storeId: string;
+          storeName: string;
+          quantity: number;
+          salePrice: number | null;
+          purchasePrice: number | null;
+          currency: string;
+          taxPercent: number | null;
+          discountPercent: number | null;
+          isStoreOverride: boolean;
+        }[];
+      }
+    >();
+
+    for (const row of rows) {
+      const key = row.productVariantId;
+      const quantity = Number(row.quantity);
+      if (!byVariant.has(key)) {
+        byVariant.set(key, {
+          productId: row.productId,
+          productName: row.productName,
+          productVariantId: row.productVariantId,
+          variantName: row.variantName,
+          variantCode: row.variantCode,
+          totalQuantity: 0,
+          stores: [],
+        });
+      }
+
+      const item = byVariant.get(key)!;
+      item.totalQuantity += quantity;
+      item.stores.push({
+        storeId: row.storeId,
+        storeName: row.storeName,
+        quantity,
+        salePrice: row.salePrice !== null ? Number(row.salePrice) : null,
+        purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
+        currency: row.currency ?? 'TRY',
+        taxPercent: row.taxPercent !== null ? Number(row.taxPercent) : null,
+        discountPercent: row.discountPercent !== null ? Number(row.discountPercent) : null,
+        isStoreOverride: row.isStoreOverride === true || row.isStoreOverride === 'true',
+      });
+    }
+
+    const items = Array.from(byVariant.values());
+
+    return {
+      items,
+      totalQuantity: items.reduce((sum, item) => sum + item.totalQuantity, 0),
+    };
   }
 
   /**
