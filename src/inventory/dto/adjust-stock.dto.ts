@@ -1,24 +1,37 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger/dist/decorators/api-property.decorator";
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 export class AdjustStockDto {
   @ApiProperty({ description: 'Stok düzeltmesi yapılacak mağaza ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
   storeId: string;
 
   @ApiProperty({ description: 'Stok düzeltmesi yapılacak ürün varyant ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
   productVariantId: string;
-  
-  // hedef stok miktarı (absolute), servis içinde mevcut stokla farkını ADJUSTMENT olarak yazarsın
-  @ApiProperty({
-    example: 32,
-    description: 'Sayım sonrası olması gereken stok miktarı (hedef değer)',
-  })
+
+  @ApiProperty({ example: 32, description: 'Hedef stok miktarı' })
+  @IsNumber()
+  @Min(0)
   newQuantity: number;
 
   @ApiPropertyOptional({ example: 'COUNT-2025-001' })
-  reference?: string; // Sayım fişi, belge no vs.
+  @IsOptional()
+  @IsString()
+  reference?: string;
 
-  @ApiPropertyOptional({
-    example: { reason: 'Sayım farkı', note: '5 adet fire' },
-  })
-  meta?: Record<string, any>; // {"reason": "Sayım farkı", "note": "..."} gibi
+  @ApiPropertyOptional({ example: { reason: 'Sayım farkı' } })
+  @IsOptional()
+  @IsObject()
+  meta?: Record<string, any>;
 }
