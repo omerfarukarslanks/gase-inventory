@@ -20,6 +20,7 @@ import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { StockTransferModule } from './transfer/stock-transfer.module';
 import { join } from 'path';
 import { PriceModule } from './pricing/price.module';
+import { AttributeModule } from './attribute/attribute.module';
 
 @Module({
   imports: [
@@ -86,6 +87,7 @@ import { PriceModule } from './pricing/price.module';
     ReportsModule,
     StockTransferModule,
     PriceModule,
+    AttributeModule,
   ],
   controllers: [AppController],
   providers: [

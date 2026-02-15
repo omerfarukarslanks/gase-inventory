@@ -11,48 +11,46 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
-import { CreateVariantDto } from './dto/create-variant.dto';
-import { UpdateVariantDto } from './dto/update-variant.dto';
-import { ListVariantsDto } from './dto/list-variants.dto';
-import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
-import { ProductService } from './product.service';
-import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
-import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
-import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
-import { ListProductsDto } from './dto/list-products.dto';
 import { ApiBody } from '@nestjs/swagger';
+import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
+import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
+import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
+import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
+import { CreateProductDto } from './dto/create-product.dto';
+import { CreateVariantDto } from './dto/create-variant.dto';
+import { ListProductsDto } from './dto/list-products.dto';
+import { ListVariantsDto } from './dto/list-variants.dto';
+import { UpdateProductDto } from './dto/update-product.dto';
+import { UpdateVariantDto } from './dto/update-variant.dto';
+import { ProductService } from './product.service';
 
 @ApiTags('Products')
-@ApiBearerAuth('access-token') // DocumentBuilder içindeki key
+@ApiBearerAuth('access-token')
 @Controller('products')
 @UseGuards(JwtAuthGuard)
 export class ProductController {
   constructor(private readonly productsService: ProductService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Yeni ürün oluştur' })
-  create(
-    @Body() dto: CreateProductDto
-  ) {
+  @ApiOperation({ summary: 'Yeni urun olustur' })
+  create(@Body() dto: CreateProductDto) {
     return this.productsService.createProduct(dto);
   }
 
   @Get()
-  @ApiOperation({ summary: 'Mevcut tenant için tüm ürünleri listele' })
+  @ApiOperation({ summary: 'Mevcut tenant icin tum urunleri listele' })
   findAll(@Query() query: ListProductsDto) {
     return this.productsService.findAll(query);
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'Belirli bir ürünü getir' })
+  @ApiOperation({ summary: 'Belirli bir urunu getir' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.findOne(id);
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Belirli bir ürünü güncelle' })
+  @ApiOperation({ summary: 'Belirli bir urunu guncelle' })
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductDto,
@@ -61,15 +59,13 @@ export class ProductController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Belirli bir ürünü pasife al (soft delete)' })
+  @ApiOperation({ summary: 'Belirli bir urunu pasife al (soft delete)' })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);
   }
 
-  // ---------- Variant endpoints ----------
-
   @Post(':id/variants')
-  @ApiOperation({ summary: 'Ürüne varyant(lar) ekle' })
+  @ApiOperation({ summary: 'Urune varyant(lar) ekle' })
   @ApiBody({ type: CreateVariantDto, isArray: true })
   addVariant(
     @Param('id', ParseUUIDPipe) productId: string,
@@ -79,7 +75,7 @@ export class ProductController {
   }
 
   @Get(':id/variants')
-  @ApiOperation({ summary: 'Ürünün varyantlarını listele (varsayılan: aktif)' })
+  @ApiOperation({ summary: 'Urunun varyantlarini listele (varsayilan: aktif)' })
   listVariants(
     @Param('id', ParseUUIDPipe) productId: string,
     @Query() query: ListVariantsDto,
@@ -88,7 +84,7 @@ export class ProductController {
   }
 
   @Patch(':id/variants/:variantId')
-  @ApiOperation({ summary: 'Ürün varyantını güncelle' })
+  @ApiOperation({ summary: 'Urun varyantini guncelle' })
   updateVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,
@@ -98,7 +94,7 @@ export class ProductController {
   }
 
   @Delete(':id/variants/:variantId')
-  @ApiOperation({ summary: 'Ürün varyantını pasife al (soft delete)' })
+  @ApiOperation({ summary: 'Urun varyantini pasife al (soft delete)' })
   removeVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,
