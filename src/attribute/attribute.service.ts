@@ -38,6 +38,31 @@ export class AttributeService {
     return manager ? manager.getRepository(AttributeValue) : this.attributeValueRepo;
   }
 
+  private async getNextAttributeValue(tenantId: string, manager?: EntityManager): Promise<number> {
+    const repo = this.getAttributeRepo(manager);
+    const result = await repo
+      .createQueryBuilder('attribute')
+      .select('COALESCE(MAX(attribute.value), 0)', 'maxValue')
+      .where('attribute.tenantId = :tenantId', { tenantId })
+      .getRawOne<{ maxValue: number }>();
+
+    return (result?.maxValue ?? 0) + 1;
+  }
+
+  private async getNextAttributeValueValue(
+    attributeId: string,
+    manager?: EntityManager,
+  ): Promise<number> {
+    const repo = this.getAttributeValueRepo(manager);
+    const result = await repo
+      .createQueryBuilder('av')
+      .select('COALESCE(MAX(av.value), 0)', 'maxValue')
+      .where('av.attributeId = :attributeId', { attributeId })
+      .getRawOne<{ maxValue: number }>();
+
+    return (result?.maxValue ?? 0) + 1;
+  }
+
   async createAttribute(dto: CreateAttributeDto): Promise<Attribute> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
@@ -50,16 +75,11 @@ export class AttributeService {
       throw new BadRequestException(AttributeErrors.ATTRIBUTE_NAME_EXISTS);
     }
 
-    const existsByValue = await repo.findOne({
-      where: { tenant: { id: tenantId }, value: dto.value },
-    });
-    if (existsByValue) {
-      throw new BadRequestException(AttributeErrors.ATTRIBUTE_VALUE_EXISTS);
-    }
+    const nextValue = await this.getNextAttributeValue(tenantId);
 
     const attribute = repo.create({
       name: dto.name,
-      value: dto.value,
+      value: nextValue,
       tenant: { id: tenantId } as any,
       createdById: userId,
       updatedById: userId,
@@ -197,14 +217,10 @@ export class AttributeService {
     return attribute;
   }
 
-  async updateAttribute(dto: UpdateAttributeDto): Promise<Attribute> {
-    const attribute = await this.findOneAttributeByNameOrThrow(dto.currentName);
+  async updateAttribute(id: string, dto: UpdateAttributeDto): Promise<Attribute> {
+    const attribute = await this.findOneAttribute(id);
     const userId = this.appContext.getUserIdOrThrow();
     const tenantId = this.appContext.getTenantIdOrThrow();
-
-    if (dto.currentValue !== undefined && dto.currentValue !== attribute.value) {
-      throw new NotFoundException(AttributeErrors.ATTRIBUTE_NOT_FOUND);
-    }
 
     if (dto.name && dto.name !== attribute.name) {
       const existsByName = await this.attributeRepo.findOne({
@@ -215,18 +231,8 @@ export class AttributeService {
       }
     }
 
-    if (dto.value !== undefined && dto.value !== attribute.value) {
-      const existsByValue = await this.attributeRepo.findOne({
-        where: { tenant: { id: tenantId }, value: dto.value },
-      });
-      if (existsByValue && existsByValue.id !== attribute.id) {
-        throw new BadRequestException(AttributeErrors.ATTRIBUTE_VALUE_EXISTS);
-      }
-    }
-
     Object.assign(attribute, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
-      ...(dto.value !== undefined ? { value: dto.value } : {}),
       ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       updatedById: userId,
     });
@@ -237,10 +243,6 @@ export class AttributeService {
   async removeAttribute(dto: RemoveAttributeDto): Promise<void> {
     const attribute = await this.findOneAttributeByNameOrThrow(dto.name);
     const userId = this.appContext.getUserIdOrThrow();
-
-    if (dto.value !== undefined && dto.value !== attribute.value) {
-      throw new NotFoundException(AttributeErrors.ATTRIBUTE_NOT_FOUND);
-    }
 
     attribute.isActive = false;
     attribute.updatedById = userId;
@@ -258,6 +260,8 @@ export class AttributeService {
       const valueRepo = this.getAttributeValueRepo(manager);
       const created: AttributeValue[] = [];
 
+      let nextValue = await this.getNextAttributeValueValue(attribute.id, manager);
+
       for (const dto of dtos) {
         const existsByName = await valueRepo.findOne({
           where: { attribute: { id: attribute.id }, name: dto.name },
@@ -266,22 +270,16 @@ export class AttributeService {
           throw new BadRequestException(AttributeErrors.ATTRIBUTE_NAME_EXISTS);
         }
 
-        const existsByValue = await valueRepo.findOne({
-          where: { attribute: { id: attribute.id }, value: dto.value },
-        });
-        if (existsByValue) {
-          throw new BadRequestException(AttributeErrors.ATTRIBUTE_VALUE_EXISTS);
-        }
-
         const item = valueRepo.create({
           name: dto.name,
-          value: dto.value,
+          value: nextValue,
           attribute,
           createdById: userId,
           updatedById: userId,
         });
 
         created.push(await valueRepo.save(item));
+        nextValue++;
       }
 
       return created;
@@ -289,19 +287,15 @@ export class AttributeService {
   }
 
   async updateValue(
-    attributeValue: number,
+    id: string,
     dto: UpdateAttributeValueDto,
   ): Promise<AttributeValue> {
-    const attribute = await this.findOneAttributeByValueOrThrow(attributeValue);
     const repo = this.getAttributeValueRepo();
     const userId = this.appContext.getUserIdOrThrow();
 
     const item = await repo.findOne({
-      where: {
-        attribute: { id: attribute.id },
-        name: dto.currentName,
-        value: dto.currentValue,
-      },
+      where: { id },
+      relations: ['attribute'],
     });
 
     if (!item) {
@@ -310,25 +304,15 @@ export class AttributeService {
 
     if (dto.name && dto.name !== item.name) {
       const existsByName = await repo.findOne({
-        where: { attribute: { id: attribute.id }, name: dto.name },
+        where: { attribute: { id: item.attribute.id }, name: dto.name },
       });
       if (existsByName && existsByName.id !== item.id) {
         throw new BadRequestException(AttributeErrors.ATTRIBUTE_NAME_EXISTS);
       }
     }
 
-    if (dto.value !== undefined && dto.value !== item.value) {
-      const existsByValue = await repo.findOne({
-        where: { attribute: { id: attribute.id }, value: dto.value },
-      });
-      if (existsByValue && existsByValue.id !== item.id) {
-        throw new BadRequestException(AttributeErrors.ATTRIBUTE_VALUE_EXISTS);
-      }
-    }
-
     Object.assign(item, {
       ...(dto.name !== undefined ? { name: dto.name } : {}),
-      ...(dto.value !== undefined ? { value: dto.value } : {}),
       ...(dto.isActive !== undefined ? { isActive: dto.isActive } : {}),
       updatedById: userId,
     });
@@ -348,7 +332,6 @@ export class AttributeService {
       where: {
         attribute: { id: attribute.id },
         name: dto.name,
-        value: dto.value,
       },
     });
 

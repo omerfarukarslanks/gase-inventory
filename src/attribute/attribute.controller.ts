@@ -65,10 +65,13 @@ export class AttributeController {
     return this.attributeService.findOneAttribute(id);
   }
 
-  @Patch()
-  @ApiOperation({ summary: 'Attribute adina gore guncelle' })
-  update(@Body() dto: UpdateAttributeDto) {
-    return this.attributeService.updateAttribute(dto);
+  @Patch(':id')
+  @ApiOperation({ summary: 'Attribute guncelle' })
+  update(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateAttributeDto,
+  ) {
+    return this.attributeService.updateAttribute(id, dto);
   }
 
   @Delete()
@@ -88,13 +91,13 @@ export class AttributeController {
     return this.attributeService.addValues(attributeValue, dtos);
   }
 
-  @Patch(':attributeValue/values')
-  @ApiOperation({ summary: 'Attribute value ad/deger bilgisi ile guncelle' })
+  @Patch('values/:id')
+  @ApiOperation({ summary: 'Attribute value guncelle' })
   updateValue(
-    @Param('attributeValue', ParseIntPipe) attributeValue: number,
+    @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAttributeValueDto,
   ) {
-    return this.attributeService.updateValue(attributeValue, dto);
+    return this.attributeService.updateValue(id, dto);
   }
 
   @Delete(':attributeValue/values')
