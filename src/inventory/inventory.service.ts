@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { EntityManager, In, Repository } from 'typeorm';
 
 import { InventoryMovement, MovementType } from './inventory-movement.entity';
 import { ReceiveStockDto } from './dto/receive-stock.dto';
@@ -22,6 +22,8 @@ import { ListMovementsQueryDto, PaginatedMovementsResponse } from './dto/list-mo
 import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
+import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
+import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
 
 @Injectable()
 export class InventoryService {
@@ -722,37 +724,78 @@ export class InventoryService {
    * - productVariantId bazında toplam quantity
    */
   async getTenantStockSummary(
+    query?: OptionalPaginationQueryDto,
     manager?: EntityManager,
   ): Promise<
     {
-      items: {
+      data: {
         productId: string;
         productName: string;
-        productVariantId: string;
-        variantName: string;
-        variantCode: string;
         totalQuantity: number;
-        stores: {
-          storeId: string;
-          storeName: string;
-          quantity: number;
-          salePrice: number | null;
-          purchasePrice: number | null;
-          currency: string;
-          taxPercent: number | null;
-          discountPercent: number | null;
-          isStoreOverride: boolean;
+        variants: {
+          productVariantId: string;
+          variantName: string;
+          variantCode: string;
+          totalQuantity: number;
+          stores: {
+            storeId: string;
+            storeName: string;
+            quantity: number;
+            totalQuantity: number;
+            salePrice: number | null;
+            purchasePrice: number | null;
+            currency: string;
+            taxPercent: number | null;
+            discountPercent: number | null;
+            isStoreOverride: boolean;
+          }[];
         }[];
       }[];
+      meta: {
+        total: number;
+        limit: number;
+        page: number;
+        totalPages: number;
+      };
       totalQuantity: number;
     }
   > {
     const tenantId = this.getTenantIdOrThrow();
+    const rawStoreIds = Array.isArray(query?.storeIds)
+      ? query.storeIds
+      : query?.storeIds
+        ? [query.storeIds as unknown as string]
+        : [];
+    const requestedStoreIds = Array.from(
+      new Set(
+        [
+          ...rawStoreIds,
+          ...(query?.storeId ? [query.storeId] : []),
+        ]
+          .map((id) => id?.trim())
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+    const search = query?.search?.trim();
+
+    if (requestedStoreIds.length) {
+      const stores = await this.getStoreRepo(manager).find({
+        where: {
+          id: In(requestedStoreIds),
+          tenant: { id: tenantId },
+        },
+        select: { id: true },
+      });
+
+      if (stores.length !== requestedStoreIds.length) {
+        throw new NotFoundException(InventoryErrors.STORE_NOT_FOUND_FOR_TENANT);
+      }
+    }
 
     const repo = this.getStockSummaryRepository(manager);
     const sppTableName = this.storeProductPriceRepo.metadata.tableName;
 
-    const rows = await repo
+    const qb = repo
       .createQueryBuilder('s')
       .innerJoin('s.productVariant', 'variant')
       .innerJoin('variant.product', 'product')
@@ -781,7 +824,20 @@ export class InventoryService {
       .addSelect('COALESCE(spp."taxPercent", variant."defaultTaxPercent")', 'taxPercent')
       .addSelect('spp."discountPercent"', 'discountPercent')
       .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
-      .where('s.tenantId = :tenantId', { tenantId })
+      .where('s.tenantId = :tenantId', { tenantId });
+
+    if (requestedStoreIds.length) {
+      qb.andWhere('s.storeId IN (:...storeIds)', { storeIds: requestedStoreIds });
+    }
+
+    if (search) {
+      qb.andWhere(
+        '(product.name ILIKE :search OR variant.name ILIKE :search OR variant.code ILIKE :search OR store.name ILIKE :search)',
+        { search: `%${search}%` },
+      );
+    }
+
+    const rows = await qb
       .orderBy('product.name', 'ASC')
       .addOrderBy('variant.name', 'ASC')
       .addOrderBy('store.name', 'ASC')
@@ -802,50 +858,69 @@ export class InventoryService {
         isStoreOverride: boolean | string;
       }>();
 
-    const byVariant = new Map<
+    const byProduct = new Map<
       string,
       {
         productId: string;
         productName: string;
-        productVariantId: string;
-        variantName: string;
-        variantCode: string;
         totalQuantity: number;
-        stores: {
-          storeId: string;
-          storeName: string;
-          quantity: number;
-          salePrice: number | null;
-          purchasePrice: number | null;
-          currency: string;
-          taxPercent: number | null;
-          discountPercent: number | null;
-          isStoreOverride: boolean;
-        }[];
+        variants: Array<{
+          productVariantId: string;
+          variantName: string;
+          variantCode: string;
+          totalQuantity: number;
+          stores: {
+            storeId: string;
+            storeName: string;
+            quantity: number;
+            totalQuantity: number;
+            salePrice: number | null;
+            purchasePrice: number | null;
+            currency: string;
+            taxPercent: number | null;
+            discountPercent: number | null;
+            isStoreOverride: boolean;
+          }[];
+        }>;
       }
     >();
 
     for (const row of rows) {
-      const key = row.productVariantId;
+      const productKey = row.productId;
       const quantity = Number(row.quantity);
-      if (!byVariant.has(key)) {
-        byVariant.set(key, {
+      if (!byProduct.has(productKey)) {
+        byProduct.set(productKey, {
           productId: row.productId,
           productName: row.productName,
+          totalQuantity: 0,
+          variants: [],
+        });
+      }
+
+      const productItem = byProduct.get(productKey)!;
+      productItem.totalQuantity += quantity;
+
+      let variantItem = productItem.variants.find(
+        (v) => v.productVariantId === row.productVariantId,
+      );
+
+      if (!variantItem) {
+        variantItem = {
           productVariantId: row.productVariantId,
           variantName: row.variantName,
           variantCode: row.variantCode,
           totalQuantity: 0,
           stores: [],
-        });
+        };
+        productItem.variants.push(variantItem);
       }
 
-      const item = byVariant.get(key)!;
-      item.totalQuantity += quantity;
-      item.stores.push({
+      variantItem.totalQuantity += quantity;
+      variantItem.stores.push({
         storeId: row.storeId,
         storeName: row.storeName,
         quantity,
+        totalQuantity: quantity,
         salePrice: row.salePrice !== null ? Number(row.salePrice) : null,
         purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
         currency: row.currency ?? 'TRY',
@@ -855,11 +930,32 @@ export class InventoryService {
       });
     }
 
-    const items = Array.from(byVariant.values());
+    const items = Array.from(byProduct.values());
+    const totalQuantity = items.reduce((sum, item) => sum + item.totalQuantity, 0);
+
+    const total = items.length;
+    const parsedPage = query?.page !== undefined ? Number(query.page) : undefined;
+    const parsedLimit = query?.limit !== undefined ? Number(query.limit) : undefined;
+    const hasPagination =
+      Number.isFinite(parsedPage) || Number.isFinite(parsedLimit);
+    const page = hasPagination
+      ? Math.max(1, Math.trunc(parsedPage ?? 1))
+      : 1;
+    const limit = hasPagination
+      ? Math.min(100, Math.max(1, Math.trunc(parsedLimit ?? 10)))
+      : total;
+    const skip = hasPagination ? (page - 1) * limit : 0;
+    const data = hasPagination ? items.slice(skip, skip + limit) : items;
 
     return {
-      items,
-      totalQuantity: items.reduce((sum, item) => sum + item.totalQuantity, 0),
+      data,
+      meta: {
+        total,
+        limit,
+        page,
+        totalPages: hasPagination ? Math.ceil(total / limit) : (total > 0 ? 1 : 0),
+      },
+      totalQuantity,
     };
   }
 
@@ -875,26 +971,116 @@ export class InventoryService {
    */
   async getVariantStockByStore(
     productVariantId: string,
+    query?: OptionalPaginationQueryDto,
     manager?: EntityManager,
-  ): Promise<{ storeId: string; quantity: number }[]> {
+  ): Promise<
+    {
+      product: {
+        productId: string;
+        productName: string;
+        totalQuantity: number;
+        variants: {
+          productVariantId: string;
+          variantName: string;
+          variantCode: string;
+          totalQuantity: number;
+          stores: {
+            storeId: string;
+            storeName: string;
+            quantity: number;
+            totalQuantity: number;
+          }[];
+        }[];
+      };
+      data: {
+        storeId: string;
+        storeName: string;
+        quantity: number;
+        totalQuantity: number;
+      }[];
+      meta: {
+        total: number;
+        limit: number;
+        page: number;
+        totalPages: number;
+      };
+      totalQuantity: number;
+    }
+  > {
     const tenantId = this.getTenantIdOrThrow();
 
-    await this.getTenantVariantOrThrow(productVariantId, manager);
+    const variant = await this.getTenantVariantOrThrow(productVariantId, manager);
 
     const repo = this.getStockSummaryRepository(manager);
 
     const rows = await repo
       .createQueryBuilder('s')
+      .innerJoin('s.store', 'store')
       .select('s.storeId', 'storeId')
+      .addSelect('store.name', 'storeName')
       .addSelect('s.quantity', 'quantity')
       .where('s.tenantId = :tenantId', { tenantId })
       .andWhere('s.productVariantId = :variantId', { variantId: productVariantId })
-      .getRawMany<{ storeId: string; quantity: string }>();
+      .orderBy('store.name', 'ASC')
+      .getRawMany<{ storeId: string; storeName: string; quantity: string }>();
 
-    return rows.map((r) => ({
+    const items = rows.map((r) => ({
       storeId: r.storeId,
+      storeName: r.storeName,
       quantity: Number(r.quantity),
+      totalQuantity: Number(r.quantity),
     }));
+
+    const totalQuantity = items.reduce((sum, item) => sum + item.quantity, 0);
+    const productPayload = {
+      productId: variant.product.id,
+      productName: variant.product.name,
+      totalQuantity,
+      variants: [
+        {
+          productVariantId: variant.id,
+          variantName: variant.name,
+          variantCode: variant.code,
+          totalQuantity,
+          stores: items,
+        },
+      ],
+    };
+
+    const total = items.length;
+    const parsedPage = query?.page !== undefined ? Number(query.page) : undefined;
+    const parsedLimit = query?.limit !== undefined ? Number(query.limit) : undefined;
+    const hasPagination =
+      Number.isFinite(parsedPage) || Number.isFinite(parsedLimit);
+    const page = hasPagination
+      ? Math.max(1, Math.trunc(parsedPage ?? 1))
+      : 1;
+    const limit = hasPagination
+      ? Math.min(100, Math.max(1, Math.trunc(parsedLimit ?? 10)))
+      : total;
+    const skip = hasPagination ? (page - 1) * limit : 0;
+    const data = hasPagination ? items.slice(skip, skip + limit) : items;
+    const stores = hasPagination ? items.slice(skip, skip + limit) : items;
+
+    return {
+      product: {
+        ...productPayload,
+        variants: [
+          {
+            ...productPayload.variants[0],
+            stores,
+          },
+        ],
+      },
+      data,
+      meta: {
+        total,
+        limit,
+        page,
+        totalPages: hasPagination ? Math.ceil(total / limit) : (total > 0 ? 1 : 0),
+      },
+      totalQuantity,
+    };
   }
 
   // ---- Hareket geçmişi ----
@@ -958,6 +1144,34 @@ export class InventoryService {
       for (const item of dto.items) {
         const movement = await this.receiveStock(item, txManager);
         results.push(movement);
+      }
+
+      return results;
+    });
+  }
+
+  async bulkAdjustStock(
+    dto: BulkAdjustStockDto,
+    manager?: EntityManager,
+  ): Promise<
+    {
+      movement: InventoryMovement | null;
+      previousQuantity: number;
+      newQuantity: number;
+      difference: number;
+    }[]
+  > {
+    return this.runInTransaction(manager, async (txManager) => {
+      const results: {
+        movement: InventoryMovement | null;
+        previousQuantity: number;
+        newQuantity: number;
+        difference: number;
+      }[] = [];
+
+      for (const item of dto.items) {
+        const result = await this.adjustStock(item, txManager);
+        results.push(result);
       }
 
       return results;

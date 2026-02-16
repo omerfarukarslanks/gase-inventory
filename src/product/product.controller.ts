@@ -4,14 +4,12 @@ import {
   Delete,
   Get,
   Param,
-  ParseArrayPipe,
   ParseUUIDPipe,
   Patch,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBody } from '@nestjs/swagger';
 import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decorator';
 import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
 import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
@@ -65,13 +63,12 @@ export class ProductController {
   }
 
   @Post(':id/variants')
-  @ApiOperation({ summary: 'Urune varyant(lar) ekle' })
-  @ApiBody({ type: CreateVariantDto, isArray: true })
-  addVariant(
+  @ApiOperation({ summary: 'Attribute secimlerine gore urun varyantlarini olustur/guncelle' })
+  syncVariants(
     @Param('id', ParseUUIDPipe) productId: string,
-    @Body(new ParseArrayPipe({ items: CreateVariantDto })) dtos: CreateVariantDto[],
+    @Body() dto: CreateVariantDto,
   ) {
-    return this.productsService.addVariants(productId, dtos);
+    return this.productsService.syncVariants(productId, dto);
   }
 
   @Get(':id/variants')
@@ -81,6 +78,14 @@ export class ProductController {
     @Query() query: ListVariantsDto,
   ) {
     return this.productsService.listVariants(productId, query);
+  }
+
+  @Get(':id/attributes')
+  @ApiOperation({ summary: 'Urunun attribute secimlerini getir' })
+  getProductAttributes(
+    @Param('id', ParseUUIDPipe) productId: string,
+  ) {
+    return this.productsService.getProductAttributeSelections(productId);
   }
 
   @Patch(':id/variants/:variantId')

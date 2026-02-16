@@ -1,26 +1,16 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsNotEmpty, IsOptional, IsString } from "class-validator";
+import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import { ArrayMinSize, IsArray, ValidateNested } from 'class-validator';
+import { ProductAttributeSelectionDto } from './product-attribute-selection.dto';
 
 export class CreateVariantDto {
-  @ApiProperty({ example: 'Kırmızı / L' })
-  @IsString()
-  @IsNotEmpty()
-  name: string;
-
-  @ApiProperty({ example: 'RED-L', description: 'Varyant kodu' })
-  @IsString()
-  @IsNotEmpty()
-  code: string;
-
-  @ApiPropertyOptional({ example: '8691234567890' })
-  @IsString()
-  @IsOptional()
-  barcode?: string;
-
-  @ApiPropertyOptional({
-    example: { color: 'Red', size: 'L' },
-    description: 'Serbest biçimli attribute bilgileri (renk, beden vb.)',
+  @ApiProperty({
+    type: [ProductAttributeSelectionDto],
+    description: 'Varyantlari olusturmak icin attribute/value secimleri',
   })
-  @IsOptional()
-  attributes?: Record<string, any>;
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => ProductAttributeSelectionDto)
+  attributes: ProductAttributeSelectionDto[];
 }

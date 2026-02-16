@@ -16,6 +16,8 @@ import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { ListMovementsQueryDto } from './dto/list-movements.dto';
 import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
+import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
+import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Inventory')
@@ -60,6 +62,12 @@ export class InventoryController {
     return this.inventoryService.adjustStock(dto);
   }
 
+  @Post('adjust/bulk')
+  @ApiOperation({ summary: 'Toplu stok düzeltme' })
+  bulkAdjust(@Body() dto: BulkAdjustStockDto) {
+    return this.inventoryService.bulkAdjustStock(dto);
+  }
+
   // Hareket geçmişi
   @Get('movements')
   @ApiOperation({ summary: 'Stok hareket geçmişi (filtreli, paginated)' })
@@ -94,14 +102,17 @@ export class InventoryController {
   // Tenant bazlı stok özeti
   @Get('tenant/stock')
   @ApiOperation({ summary: 'Tenant bazlı stok özeti (varyant bazında)' })
-  getTenantStockSummary() {
-    return this.inventoryService.getTenantStockSummary();
+  getTenantStockSummary(@Query() query: OptionalPaginationQueryDto) {
+    return this.inventoryService.getTenantStockSummary(query);
   }
 
   // GET /inventory/variant/:variantId/by-store
   @Get('variant/:variantId/by-store')
-  async getVariantStockByStore(@Param('variantId') variantId: string) {
-    return this.inventoryService.getVariantStockByStore(variantId);
+  async getVariantStockByStore(
+    @Param('variantId') variantId: string,
+    @Query() query: OptionalPaginationQueryDto,
+  ) {
+    return this.inventoryService.getVariantStockByStore(variantId, query);
   }
 
 }
