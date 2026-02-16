@@ -81,16 +81,22 @@ export class ProductService {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
+    const { attributes, ...productPayload } = dto;
 
     const product = repo.create({
-      ...dto,
+      ...productPayload,
       tenant: { id: tenantId } as any,
       defaultCurrency: dto.defaultCurrency ?? 'TRY',
       createdById: userId,
       updatedById: userId,
     });
+    const saved = await repo.save(product);
 
-    return repo.save(product);
+    if (Array.isArray(attributes) && attributes.length > 0) {
+      await this.syncGeneratedVariants(saved, attributes, manager);
+    }
+
+    return saved;
   }
 
   async findAll(
@@ -137,7 +143,6 @@ export class ProductService {
         'product.name',
         'product.sku',
         'product.description',
-        'product.defaultBarcode',
         'product.image',
         'product.defaultCurrency',
         'product.defaultSalePrice',
@@ -220,7 +225,6 @@ export class ProductService {
         'product.name',
         'product.sku',
         'product.description',
-        'product.defaultBarcode',
         'product.image',
         'product.defaultCurrency',
         'product.defaultSalePrice',
@@ -331,11 +335,18 @@ export class ProductService {
   ): Promise<{
     attributes: Array<{
       id: string;
-      values: string[];
+      name: string | null;
+      isActive: boolean;
+      values: Array<{
+        id: string;
+        name: string | null;
+        isActive: boolean;
+      }>;
     }>;
   }> {
     const repo = this.getVariantRepo(manager);
     const product = await this.findOne(productId, manager);
+    const tenantId = this.appContext.getTenantIdOrThrow();
 
     const variants = await repo.find({
       select: {
@@ -386,11 +397,52 @@ export class ProductService {
       }
     }
 
+    const attributeIds = Array.from(valueMap.keys());
+    if (attributeIds.length === 0) {
+      return { attributes: [] };
+    }
+
+    const allValueIds = Array.from(
+      new Set(Array.from(valueMap.values()).flatMap((valueIds) => Array.from(valueIds))),
+    );
+
+    const attributes = await this.getAttributeRepo(manager).find({
+      where: {
+        id: In(attributeIds),
+        tenant: { id: tenantId },
+      },
+    });
+    const attributeById = new Map(attributes.map((attribute) => [attribute.id, attribute]));
+
+    const values = allValueIds.length
+      ? await this.getAttributeValueRepo(manager).find({
+          where: {
+            id: In(allValueIds),
+          },
+          relations: ['attribute'],
+        })
+      : [];
+    const valueById = new Map(values.map((value) => [value.id, value]));
+
     return {
-      attributes: Array.from(valueMap.entries()).map(([id, values]) => ({
-        id,
-        values: Array.from(values),
-      })),
+      attributes: attributeIds.map((attributeId) => {
+        const attribute = attributeById.get(attributeId);
+        const selectedValueIds = Array.from(valueMap.get(attributeId) ?? []);
+
+        return {
+          id: attributeId,
+          name: attribute?.name ?? null,
+          isActive: attribute?.isActive ?? false,
+          values: selectedValueIds.map((valueId) => {
+            const value = valueById.get(valueId);
+            return {
+              id: valueId,
+              name: value?.name ?? null,
+              isActive: value?.isActive ?? false,
+            };
+          }),
+        };
+      }),
     };
   }
 
@@ -482,10 +534,12 @@ export class ProductService {
       const baseCode = this.buildVariantCodeBase(combination.values.map((v) => v.valueName));
 
       let target = existingByKey.get(combination.key);
+      const isNewVariant = !target;
       if (!target) {
         target = variantRepo.create({
           product,
           createdById: userId,
+          isActive: true,
         });
       }
 
@@ -500,7 +554,9 @@ export class ProductService {
       target.defaultSalePrice = product.defaultSalePrice ?? null;
       target.defaultPurchasePrice = product.defaultPurchasePrice ?? null;
       target.defaultTaxPercent = product.defaultTaxPercent ?? null;
-      target.isActive = true;
+      if (isNewVariant) {
+        target.isActive = true;
+      }
       target.updatedById = userId;
       target.attributes = {
         generated: true,

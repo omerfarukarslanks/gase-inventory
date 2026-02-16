@@ -1,5 +1,14 @@
-import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { IsEmpty, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
+import {
+  IsArray,
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsString,
+  ValidateNested,
+} from 'class-validator';
+import { ProductAttributeSelectionDto } from './product-attribute-selection.dto';
 
 export class CreateProductDto {
   @ApiProperty({ example: 'Basic T-Shirt' })
@@ -16,11 +25,6 @@ export class CreateProductDto {
   @IsString()
   @IsOptional()
   description?: string;
-  
-  @ApiPropertyOptional({ example: '1234567890123', description: 'Varsayılan barkod (varyant yoksa)' })
-  @IsString()
-  @IsOptional()
-  defaultBarcode?: string;
 
   @ApiPropertyOptional({ example: 'https://example.com/image.jpg', description: 'Ürün resmi' })
   @IsString()
@@ -47,4 +51,14 @@ export class CreateProductDto {
   @IsNumber()
   @IsOptional()
   defaultTaxPercent?: number;
+
+  @ApiPropertyOptional({
+    type: [ProductAttributeSelectionDto],
+    description: 'Product create sirasinda varyant olusturmak icin attribute secimleri',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => ProductAttributeSelectionDto)
+  attributes?: ProductAttributeSelectionDto[];
 }

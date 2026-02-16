@@ -1,5 +1,5 @@
-import { ApiPropertyOptional } from "@nestjs/swagger";
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
 
 export class UpdateProductDto {
   @ApiPropertyOptional({ example: 'Basic T-Shirt v2' })
@@ -16,11 +16,6 @@ export class UpdateProductDto {
   @IsString()
   @IsOptional()
   description?: string;
-
-  @ApiPropertyOptional({ example: '1234567890123' })
-  @IsString()
-  @IsOptional()
-  defaultBarcode?: string;
 
   @ApiPropertyOptional({ example: true, description: 'Ürünün aktiflik durumu' })
   @IsBoolean()
