@@ -17,7 +17,7 @@ import { ProductVariant } from 'src/product/product-variant.entity';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { ProductErrors } from 'src/common/errors/product.errors';
 import { SalesErrors } from 'src/common/errors/sale.errors';
-import { calculateLineAmounts } from './utils/price-calculator';
+import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
 import { PriceService } from 'src/pricing/price.service';
 import {
   ListSalesForStoreQueryDto,
@@ -193,8 +193,23 @@ export class SalesService {
           lineDto.discountPercent = priceParams.discountPercent;
         }
 
+        if (
+          lineDto.discountAmount == null &&
+          priceParams?.discountAmount != null
+        ) {
+          lineDto.discountAmount = priceParams.discountAmount;
+        }
+
         if (!lineDto.currency && priceParams?.currency) {
           lineDto.currency = priceParams.currency;
+        }
+
+        if (lineDto.taxAmount == null && priceParams?.taxAmount != null) {
+          lineDto.taxAmount = priceParams.taxAmount;
+        }
+
+        if (lineDto.lineTotal == null && priceParams?.lineTotal != null) {
+          lineDto.lineTotal = priceParams.lineTotal;
         }
       }
 

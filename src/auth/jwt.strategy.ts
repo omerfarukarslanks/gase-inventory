@@ -8,6 +8,7 @@ export interface JwtPayload {
   sub: string;
   tenantId: string;
   role: string;
+  storeId?: string | null;
 }
 
 @Injectable()
@@ -39,6 +40,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException();
     }
 
-    return user; // request.user
+    const resolvedStoreId =
+      payload.storeId ??
+      (await this.usersService.getDefaultStoreIdForUser(
+        user.id,
+        user.tenant.id,
+      ));
+
+    return {
+      ...user,
+      storeId: resolvedStoreId,
+    }; // request.user
   }
 }

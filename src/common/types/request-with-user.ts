@@ -2,6 +2,8 @@
 import { Request } from 'express';
 import { User } from 'src/user/user.entity';
 
+type AuthenticatedUser = User & { storeId?: string | null };
+
 export interface RequestWithUser extends Request {
-  user?: User; // JwtStrategy validate'den dönen user
+  user?: AuthenticatedUser; // JwtStrategy validate'den dönen user
 }

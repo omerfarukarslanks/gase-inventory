@@ -30,8 +30,8 @@ export class StoreProductPrice {
    * Mağazaya özel SATIŞ fiyatı (birim fiyat)
    * null ise -> ProductVariant.defaultSalePrice kullanılır
    */
-  @Column('numeric', { precision: 12, scale: 2, nullable: true })
-  salePrice?: number | null;
+  @Column('numeric', { name: 'salePrice', precision: 12, scale: 2, nullable: true })
+  unitPrice?: number | null;
 
   /**
    * Mağazaya özel alış fiyatı istersen kullanırsın (şimdilik optional)
@@ -62,6 +62,18 @@ export class StoreProductPrice {
    */
   @Column('numeric', { precision: 5, scale: 2, nullable: true })
   discountPercent?: number | null;
+
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  discountAmount?: number | null;
+
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  taxAmount?: number | null;
+
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  lineTotal?: number | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  campaignCode?: string | null;
 
   @Column({ default: true })
   isActive: boolean;

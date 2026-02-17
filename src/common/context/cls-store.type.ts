@@ -5,6 +5,7 @@ export interface AppClsStore extends ClsStore {
   correlationId: string;
   userId?: string;
   tenantId?: string;
+  storeId?: string;
   ip?: string;
   userAgent?: string;
 }

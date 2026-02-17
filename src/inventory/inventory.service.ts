@@ -628,11 +628,14 @@ export class InventoryService {
         variantName: string;
         variantCode: string;
         quantity: number;
-        salePrice: number | null;
+        unitPrice: number | null;
         purchasePrice: number | null;
         currency: string;
         taxPercent: number | null;
         discountPercent: number | null;
+        discountAmount: number | null;
+        taxAmount: number | null;
+        lineTotal: number | null;
         isStoreOverride: boolean;
       }[];
       totalQuantity: number;
@@ -668,11 +671,14 @@ export class InventoryService {
       .addSelect('store.id', 'storeId')
       .addSelect('store.name', 'storeName')
       .addSelect('s.quantity', 'quantity')
-      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'salePrice')
+      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'unitPrice')
       .addSelect('COALESCE(spp."purchasePrice", variant."defaultPurchasePrice")', 'purchasePrice')
       .addSelect('COALESCE(spp."currency", variant."defaultCurrency", \'TRY\')', 'currency')
       .addSelect('COALESCE(spp."taxPercent", variant."defaultTaxPercent")', 'taxPercent')
       .addSelect('spp."discountPercent"', 'discountPercent')
+      .addSelect('spp."discountAmount"', 'discountAmount')
+      .addSelect('spp."taxAmount"', 'taxAmount')
+      .addSelect('spp."lineTotal"', 'lineTotal')
       .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
       .where('s.tenantId = :tenantId', { tenantId })
       .andWhere('s.storeId = :storeId', { storeId })
@@ -687,11 +693,14 @@ export class InventoryService {
         storeId: string;
         storeName: string;
         quantity: string;
-        salePrice: string | null;
+        unitPrice: string | null;
         purchasePrice: string | null;
         currency: string | null;
         taxPercent: string | null;
         discountPercent: string | null;
+        discountAmount: string | null;
+        taxAmount: string | null;
+        lineTotal: string | null;
         isStoreOverride: boolean | string;
       }>();
 
@@ -702,11 +711,14 @@ export class InventoryService {
       variantName: row.variantName,
       variantCode: row.variantCode,
       quantity: Number(row.quantity),
-      salePrice: row.salePrice !== null ? Number(row.salePrice) : null,
+      unitPrice: row.unitPrice !== null ? Number(row.unitPrice) : null,
       purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
       currency: row.currency ?? 'TRY',
       taxPercent: row.taxPercent !== null ? Number(row.taxPercent) : null,
       discountPercent: row.discountPercent !== null ? Number(row.discountPercent) : null,
+      discountAmount: row.discountAmount !== null ? Number(row.discountAmount) : null,
+      taxAmount: row.taxAmount !== null ? Number(row.taxAmount) : null,
+      lineTotal: row.lineTotal !== null ? Number(row.lineTotal) : null,
       isStoreOverride: row.isStoreOverride === true || row.isStoreOverride === 'true',
     }));
 
@@ -742,11 +754,14 @@ export class InventoryService {
             storeName: string;
             quantity: number;
             totalQuantity: number;
-            salePrice: number | null;
+            unitPrice: number | null;
             purchasePrice: number | null;
             currency: string;
             taxPercent: number | null;
             discountPercent: number | null;
+            discountAmount: number | null;
+            taxAmount: number | null;
+            lineTotal: number | null;
             isStoreOverride: boolean;
           }[];
         }[];
@@ -818,11 +833,14 @@ export class InventoryService {
       .addSelect('store.id', 'storeId')
       .addSelect('store.name', 'storeName')
       .addSelect('s.quantity', 'quantity')
-      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'salePrice')
+      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'unitPrice')
       .addSelect('COALESCE(spp."purchasePrice", variant."defaultPurchasePrice")', 'purchasePrice')
       .addSelect('COALESCE(spp."currency", variant."defaultCurrency", \'TRY\')', 'currency')
       .addSelect('COALESCE(spp."taxPercent", variant."defaultTaxPercent")', 'taxPercent')
       .addSelect('spp."discountPercent"', 'discountPercent')
+      .addSelect('spp."discountAmount"', 'discountAmount')
+      .addSelect('spp."taxAmount"', 'taxAmount')
+      .addSelect('spp."lineTotal"', 'lineTotal')
       .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
       .where('s.tenantId = :tenantId', { tenantId });
 
@@ -850,11 +868,14 @@ export class InventoryService {
         storeId: string;
         storeName: string;
         quantity: string;
-        salePrice: string | null;
+        unitPrice: string | null;
         purchasePrice: string | null;
         currency: string | null;
         taxPercent: string | null;
         discountPercent: string | null;
+        discountAmount: string | null;
+        taxAmount: string | null;
+        lineTotal: string | null;
         isStoreOverride: boolean | string;
       }>();
 
@@ -874,11 +895,14 @@ export class InventoryService {
             storeName: string;
             quantity: number;
             totalQuantity: number;
-            salePrice: number | null;
+            unitPrice: number | null;
             purchasePrice: number | null;
             currency: string;
             taxPercent: number | null;
             discountPercent: number | null;
+            discountAmount: number | null;
+            taxAmount: number | null;
+            lineTotal: number | null;
             isStoreOverride: boolean;
           }[];
         }>;
@@ -921,11 +945,14 @@ export class InventoryService {
         storeName: row.storeName,
         quantity,
         totalQuantity: quantity,
-        salePrice: row.salePrice !== null ? Number(row.salePrice) : null,
+        unitPrice: row.unitPrice !== null ? Number(row.unitPrice) : null,
         purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
         currency: row.currency ?? 'TRY',
         taxPercent: row.taxPercent !== null ? Number(row.taxPercent) : null,
         discountPercent: row.discountPercent !== null ? Number(row.discountPercent) : null,
+        discountAmount: row.discountAmount !== null ? Number(row.discountAmount) : null,
+        taxAmount: row.taxAmount !== null ? Number(row.taxAmount) : null,
+        lineTotal: row.lineTotal !== null ? Number(row.lineTotal) : null,
         isStoreOverride: row.isStoreOverride === true || row.isStoreOverride === 'true',
       });
     }

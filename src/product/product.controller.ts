@@ -36,7 +36,10 @@ export class ProductController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Mevcut tenant icin tum urunleri listele' })
+  @ApiOperation({
+    summary:
+      'Urunleri listele (tokenda storeId varsa o magazaya bagli urunler, yoksa tenant urunleri)',
+  })
   findAll(@Query() query: ListProductsDto) {
     return this.productsService.findAll(query);
   }
@@ -72,7 +75,10 @@ export class ProductController {
   }
 
   @Get(':id/variants')
-  @ApiOperation({ summary: 'Urunun varyantlarini listele (varsayilan: aktif)' })
+  @ApiOperation({
+    summary:
+      'Urunun varyantlarini listele (tokenda storeId varsa o magazaya bagli varyantlar, yoksa tum varyantlar)',
+  })
   listVariants(
     @Param('id', ParseUUIDPipe) productId: string,
     @Query() query: ListVariantsDto,

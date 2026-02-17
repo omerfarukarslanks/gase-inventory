@@ -61,6 +61,7 @@ export class ClsContextInterceptor implements NestInterceptor {
     if (user) {
       this.cls.set('userId', user.id);
       this.cls.set('tenantId', user.tenant?.id);
+      this.cls.set('storeId', user.storeId ?? undefined);
     }
 
     // Response header’a da yazalım ki frontend loglayabilsin
@@ -70,6 +71,7 @@ export class ClsContextInterceptor implements NestInterceptor {
     const ua = this.cls.get('userAgent');
     const tenantId = this.cls.get('tenantId');
     const userId = this.cls.get('userId');
+    const storeId = this.cls.get('storeId');
 
     return next.handle().pipe(
       tap(() => {
@@ -80,6 +82,7 @@ export class ClsContextInterceptor implements NestInterceptor {
             `corrId=${correlationId}`,
             `tenant=${tenantId ?? '-'}`,
             `user=${userId ?? '-'}`,
+            `store=${storeId ?? '-'}`,
             `ip=${ip ?? '-'}`,
             `ua="${ua ?? '-'}"`,
             `${method} ${url}`,

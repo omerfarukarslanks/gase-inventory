@@ -561,6 +561,30 @@ export class UsersService {
     return userStores.map((us) => us.user);
   }
 
+  async getDefaultStoreIdForUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<string | null> {
+    const userStore = await this.userStoreRepo.findOne({
+      where: {
+        user: {
+          id: userId,
+          tenant: { id: tenantId },
+        },
+        store: {
+          tenant: { id: tenantId },
+          isActive: true,
+        },
+      },
+      relations: ['store'],
+      order: {
+        createdAt: 'ASC',
+      },
+    });
+
+    return userStore?.store?.id ?? null;
+  }
+
   async deleteUser(userId: string): Promise<void> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const actorUserId = this.appContext.getUserIdOrThrow();

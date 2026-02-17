@@ -25,11 +25,32 @@ import { ProductAttributeSelectionDto } from './dto/product-attribute-selection.
 import { slugify } from 'src/common/utils/slugify';
 import { Store } from 'src/store/store.entity';
 import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
+import { StoreErrors } from 'src/common/errors/store.errors';
 
 type ResolvedAttributeGroup = {
   attributeId: string;
   attributeName: string;
   values: { valueId: string; valueName: string }[];
+};
+
+type ProductVariantListItem = {
+  id: string;
+  name: string;
+  code: string;
+  barcode?: string;
+  attributes?: Record<string, any>;
+  createdAt: Date;
+  updatedAt: Date;
+  createdById?: string;
+  updatedById?: string;
+  isActive: boolean;
+  unitPrice: number | null;
+  currency: string;
+  discountPercent: number | null;
+  discountAmount: number | null;
+  taxPercent: number | null;
+  taxAmount: number | null;
+  lineTotal: number | null;
 };
 
 @Injectable()
@@ -77,6 +98,30 @@ export class ProductService {
       : this.storeVariantStockRepo;
   }
 
+  private async getTenantStoreOrThrow(
+    storeId: string | undefined,
+    manager?: EntityManager,
+  ): Promise<Store> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const resolvedStoreId = storeId ?? this.appContext.getStoreIdOrThrow();
+    const store = await this.getStoreRepo(manager).findOne({
+      where: {
+        id: resolvedStoreId,
+        tenant: { id: tenantId },
+      },
+      select: {
+        id: true,
+        name: true,
+      },
+    });
+
+    if (!store) {
+      throw new NotFoundException(StoreErrors.STORE_NOT_IN_TENANT);
+    }
+
+    return store;
+  }
+
   async createProduct(dto: CreateProductDto, manager?: EntityManager): Promise<Product> {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
@@ -105,6 +150,7 @@ export class ProductService {
   ): Promise<PaginatedProductsResponse> {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
     const {
       page,
       limit,
@@ -118,6 +164,7 @@ export class ProductService {
       defaultPurchasePriceMin,
       defaultPurchasePriceMax,
       isActive,
+      variantIsActive,
     } = query;
 
     if (
@@ -199,6 +246,33 @@ export class ProductService {
       qb.andWhere('product.isActive = :isActive', { isActive });
     }
 
+    if (variantIsActive !== undefined && variantIsActive !== 'all') {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM product_variants pv
+          WHERE pv."productId" = product.id
+            AND pv."isActive" = :variantIsActive
+        )`,
+        { variantIsActive },
+      );
+    }
+
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM product_variants pv
+          INNER JOIN store_variant_stock svs ON svs."productVariantId" = pv.id
+          WHERE pv."productId" = product.id
+            AND svs."storeId" = :storeId
+            AND svs."tenantId" = :tenantId
+        )`,
+        { storeId: store.id, tenantId },
+      );
+    }
+
     const countQb = qb.clone();
     const total = await countQb.getCount();
     const products = await qb.getMany();
@@ -274,7 +348,7 @@ export class ProductService {
     productId: string,
     dto: CreateVariantDto,
     manager?: EntityManager,
-  ): Promise<ProductVariant[]> {
+  ): Promise<ProductVariantListItem[]> {
     if (manager) {
       return this.syncVariantsInternal(productId, dto, manager);
     }
@@ -288,7 +362,7 @@ export class ProductService {
     productId: string,
     dto: CreateVariantDto,
     manager: EntityManager,
-  ): Promise<ProductVariant[]> {
+  ): Promise<ProductVariantListItem[]> {
     const product = await this.findOne(productId, manager);
     await this.syncGeneratedVariants(product, dto.attributes, manager);
     return this.listVariants(productId, { isActive: 'all' } as ListVariantsDto, manager);
@@ -298,35 +372,109 @@ export class ProductService {
     productId: string,
     query?: ListVariantsDto,
     manager?: EntityManager,
-  ): Promise<ProductVariant[]> {
+  ): Promise<ProductVariantListItem[]> {
     const repo = this.getVariantRepo(manager);
     const product = await this.findOne(productId, manager);
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
     const isActive = query?.isActive ?? 'all';
-    const where: any = {
-      product: { id: product.id },
-    };
+    let variants: ProductVariant[];
 
-    if (isActive !== 'all') {
-      where.isActive = isActive;
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+
+      const qb = repo
+        .createQueryBuilder('variant')
+        .innerJoin('variant.product', 'product')
+        .innerJoin(
+          StoreVariantStock,
+          'svs',
+          'svs."productVariantId" = variant.id AND svs."storeId" = :storeId AND svs."tenantId" = :tenantId',
+          {
+            storeId: store.id,
+            tenantId,
+          },
+        )
+        .select([
+          'variant.id',
+          'variant.name',
+          'variant.code',
+          'variant.barcode',
+          'variant.attributes',
+          'variant.defaultSalePrice',
+          'variant.defaultCurrency',
+          'variant.defaultTaxPercent',
+          'variant.createdAt',
+          'variant.updatedAt',
+          'variant.createdById',
+          'variant.updatedById',
+          'variant.isActive',
+        ])
+        .where('product.id = :productId', { productId: product.id })
+        .andWhere('product.tenantId = :tenantId', { tenantId })
+        .orderBy('variant.isActive', 'DESC')
+        .addOrderBy('variant."createdAt"', 'DESC');
+
+      if (isActive !== 'all') {
+        qb.andWhere('variant.isActive = :isActive', { isActive });
+      }
+
+      variants = await qb.getMany();
+    } else {
+      const where: any = {
+        product: { id: product.id },
+      };
+
+      if (isActive !== 'all') {
+        where.isActive = isActive;
+      }
+
+      variants = await repo.find({
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          barcode: true,
+          attributes: true,
+          defaultSalePrice: true,
+          defaultCurrency: true,
+          defaultTaxPercent: true,
+          createdAt: true,
+          updatedAt: true,
+          createdById: true,
+          updatedById: true,
+          isActive: true,
+        },
+        where,
+        order: { isActive: 'DESC', createdAt: 'DESC' },
+      });
     }
-    const variants = await repo.find({
-      select: {
-        id: true,
-        name: true,
-        code: true,
-        barcode: true,
-        attributes: true,
-        createdAt: true,
-        updatedAt: true,
-        createdById: true,
-        updatedById: true,
-        isActive: true,
-      },
-      where,
-      order: { isActive: 'DESC', createdAt: 'DESC' },
-    });
 
-    return variants;
+    return variants.map((variant) => ({
+      id: variant.id,
+      name: variant.name,
+      code: variant.code,
+      barcode: variant.barcode,
+      attributes: variant.attributes,
+      createdAt: variant.createdAt,
+      updatedAt: variant.updatedAt,
+      createdById: variant.createdById,
+      updatedById: variant.updatedById,
+      isActive: variant.isActive,
+      unitPrice:
+        variant.defaultSalePrice != null
+          ? Number(variant.defaultSalePrice)
+          : null,
+      currency: variant.defaultCurrency ?? 'TRY',
+      discountPercent: null,
+      discountAmount: null,
+      taxPercent:
+        variant.defaultTaxPercent != null
+          ? Number(variant.defaultTaxPercent)
+          : null,
+      taxAmount: null,
+      lineTotal: null,
+    }));
   }
 
   async getProductAttributeSelections(

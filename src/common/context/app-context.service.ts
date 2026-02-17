@@ -23,6 +23,19 @@ export class AppContextService {
     return this.cls.get('tenantId');
   }
 
+  // ---- Store ----
+  getStoreIdOrThrow(): string {
+    const storeId = this.cls.get('storeId');
+    if (!storeId) {
+      throw new UnauthorizedException(ContextErrors.STORE_NOT_FOUND);
+    }
+    return storeId;
+  }
+
+  getStoreId(): string | undefined {
+    return this.cls.get('storeId');
+  }
+
   // ---- User ----
   getUserIdOrThrow(): string {
     const userId = this.cls.get('userId');

@@ -1,4 +1,6 @@
 import {
+  BadRequestException,
+  UseGuards,
   Controller,
   Get,
   Param,
@@ -14,11 +16,10 @@ import { StoreProductPrice } from './store-product-price.entity';
 import { PriceService } from './price.service';
 import { AppContextService } from '../common/context/app-context.service';
 import { SetStorePriceDto } from './dto/set-store-price.dto';
-// import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-// import { UseGuards } from '@nestjs/common';
+import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 
 @ApiTags('store-prices')
-// @UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard)
 @Controller('store-prices')
 export class StoreProductPricesController {
   constructor(
@@ -39,6 +40,7 @@ export class StoreProductPricesController {
       where: {
         tenant: { id: tenantId },
         store: { id: storeId },
+        isActive: true,
       },
       relations: ['productVariant'],
       order: { updatedAt: 'DESC' },
@@ -61,22 +63,52 @@ export class StoreProductPricesController {
     );
   }
 
-  @Put(':storeId/:variantId')
+  @Put(':variantId')
   @ApiOperation({
-    summary: 'Mağaza + varyant için özel fiyat/vergi/indirim tanımla veya güncelle',
+    summary: 'Body hedeflemesiyle varyant için mağaza özel fiyat/vergi/indirim tanımla veya güncelle',
   })
   async setStorePrice(
-    @Param('storeId') storeId: string,
     @Param('variantId') variantId: string,
     @Body() dto: SetStorePriceDto,
   ) {
-    const result = await this.priceService.setStorePriceForVariant({
-      storeId,
+    const isMultiTarget =
+      dto.applyToAllStores === true ||
+      (dto.storeIds?.length ?? 0) > 0;
+
+    if (!isMultiTarget && dto.storeId) {
+      return this.priceService.setStorePriceForVariant({
+        storeId: dto.storeId,
+        productVariantId: variantId,
+        unitPrice: dto.unitPrice,
+        currency: dto.currency,
+        discountPercent: dto.discountPercent,
+        discountAmount: dto.discountAmount,
+        taxPercent: dto.taxPercent,
+        taxAmount: dto.taxAmount,
+        lineTotal: dto.lineTotal,
+        campaignCode: dto.campaignCode,
+      });
+    }
+
+    if (!isMultiTarget && !dto.storeId) {
+      throw new BadRequestException(
+        'storeId, storeIds veya applyToAllStores alanlarından biri gönderilmelidir.',
+      );
+    }
+
+    const result = await this.priceService.setStorePriceForVariantMulti({
+      storeId: dto.storeId,
       productVariantId: variantId,
-      salePrice: dto.salePrice ?? null,
+      storeIds: dto.storeIds,
+      applyToAllStores: dto.applyToAllStores,
+      unitPrice: dto.unitPrice,
       currency: dto.currency,
-      taxPercent: dto.taxPercent ?? null,
-      discountPercent: dto.discountPercent ?? null,
+      discountPercent: dto.discountPercent,
+      discountAmount: dto.discountAmount,
+      taxPercent: dto.taxPercent,
+      taxAmount: dto.taxAmount,
+      lineTotal: dto.lineTotal,
+      campaignCode: dto.campaignCode,
     });
 
     return result;

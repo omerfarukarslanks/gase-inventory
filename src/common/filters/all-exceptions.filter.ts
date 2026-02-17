@@ -4,6 +4,7 @@ import {
   ExceptionFilter,
   HttpException,
   HttpStatus,
+  Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ClsService } from 'nestjs-cls';
@@ -25,6 +26,8 @@ interface ErrorResponseBody {
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AllExceptionsFilter.name);
+
   constructor(
     private readonly cls: ClsService<AppClsStore>,
   ) {}
@@ -78,11 +81,14 @@ export class AllExceptionsFilter implements ExceptionFilter {
         }
       }
     } else {
-      // HttpException değilse (ör: TypeError vs.)
-      // Burada log’ları daha detaylı alabilirsin.
-      // message/stack’i log’a yazıp, kullanıcıya generic mesaj döneriz.
-      code = (exception as any).code || 'INTERNAL_SERVER_ERROR';
-      // message'ı kullanıcıya çok teknik göstermemek için generic bırakıyoruz.
+      // HttpException değilse (ör: TypeError, DB hataları vs.)
+      const err = exception as any;
+      code = err.code || 'INTERNAL_SERVER_ERROR';
+
+      this.logger.error(
+        `[${code}] ${err.message ?? 'Unknown error'}`,
+        err.stack ?? '',
+      );
     }
 
     const body: ErrorResponseBody = {
