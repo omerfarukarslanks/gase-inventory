@@ -35,7 +35,10 @@ export class SalesController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Belirli bir mağaza için satış fişlerini getir' })
+  @ApiOperation({
+    summary:
+      'Satis fislerini getir (context storeId varsa o store; yoksa storeIds filtresi; o da yoksa tenant geneli)',
+  })
   getSalesForStore(@Query() query: ListSalesForStoreQueryDto) {
     return this.salesService.findAllForStore(query);
   }

@@ -401,8 +401,38 @@ export class SalesService {
     manager?: EntityManager,
   ): Promise<PaginatedSalesResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const contextStoreId = this.appContext.getStoreId();
 
-    await this.getTenantStoreOrThrow(query.storeId, manager);
+    let requestedStoreIds: string[] = [];
+    if (contextStoreId) {
+      await this.getTenantStoreOrThrow(contextStoreId, manager);
+      requestedStoreIds = [contextStoreId];
+    } else {
+      requestedStoreIds = Array.from(
+        new Set(
+          [
+            ...(query.storeId ? [query.storeId] : []),
+            ...(query.storeIds ?? []),
+          ]
+            .map((id) => id?.trim())
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+
+      if (requestedStoreIds.length > 0) {
+        const stores = await this.getStoreRepo(manager).find({
+          where: {
+            id: In(requestedStoreIds),
+            tenant: { id: tenantId },
+          },
+          select: { id: true },
+        });
+
+        if (stores.length !== requestedStoreIds.length) {
+          throw new NotFoundException(StoreErrors.STORE_NOT_IN_TENANT);
+        }
+      }
+    }
 
     const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
@@ -422,10 +452,11 @@ export class SalesService {
       ])
       .addSelect(['store.id', 'store.name', 'store.code'])
       .where('sale.tenantId = :tenantId', { tenantId })
-      .andWhere('sale.storeId = :storeId', { storeId: query.storeId })
-      .orderBy('sale.createdAt', 'DESC')
-      .skip(query.offset)
-      .take(query.limit);
+      .orderBy('sale.createdAt', 'DESC');
+
+    if (requestedStoreIds.length > 0) {
+      qb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: requestedStoreIds });
+    }
 
     if (query.includeLines) {
       qb
@@ -450,15 +481,24 @@ export class SalesService {
         ]);
     }
 
-    const [sales, total] = await qb.getManyAndCount();
+    if (!query.hasPagination) {
+      const sales = await qb.getMany();
+      return { data: sales };
+    }
+
+    const page = Math.max(1, Math.trunc(query.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Math.trunc(query.limit ?? 10)));
+    const skip = (page - 1) * limit;
+
+    const [sales, total] = await qb.skip(skip).take(limit).getManyAndCount();
 
     return {
       data: sales,
       meta: {
         total,
-        limit: query.limit,
-        offset: query.offset,
-        hasMore: query.offset + sales.length < total,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit),
       },
     };
   }
