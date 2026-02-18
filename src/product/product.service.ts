@@ -817,9 +817,84 @@ export class ProductService {
     dto: CreateVariantDto,
     manager: EntityManager,
   ): Promise<ProductVariantListItem[]> {
-    const product = await this.findOne(productId, manager);
+    const product = await this.findProductForVariantSync(productId, manager);
     await this.syncGeneratedVariants(product, dto.attributes, manager);
     return this.listVariants(productId, { isActive: 'all' } as ListVariantsDto, manager);
+  }
+
+  private async findProductForVariantSync(
+    productId: string,
+    manager?: EntityManager,
+  ): Promise<Product> {
+    const repo = this.getProductRepo(manager);
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
+
+    const product = await repo
+      .createQueryBuilder('product')
+      .select([
+        'product.id',
+        'product.name',
+        'product.sku',
+        'product.description',
+        'product.image',
+        'product.defaultCurrency',
+        'product.defaultSalePrice',
+        'product.defaultPurchasePrice',
+        'product.defaultDiscountPercent',
+        'product.defaultDiscountAmount',
+        'product.defaultTaxPercent',
+        'product.defaultTaxAmount',
+        'product.defaultLineTotal',
+        'product.isActive',
+        'product.createdAt',
+        'product.updatedAt',
+        'product.createdById',
+        'product.updatedById',
+      ])
+      .where('product.id = :id', { id: productId })
+      .andWhere('product.tenantId = :tenantId', { tenantId })
+      .getOne();
+
+    if (!product) {
+      throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
+    }
+
+    if (!tokenStoreId) {
+      return product;
+    }
+
+    const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+    const scopedExists = await this.getVariantRepo(manager)
+      .createQueryBuilder('variant')
+      .innerJoin(
+        StoreVariantStock,
+        'svs',
+        'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+        { tenantId },
+      )
+      .select('1')
+      .where('variant."productId" = :productId', { productId })
+      .andWhere('svs."storeId" = :storeId', { storeId: store.id })
+      .limit(1)
+      .getRawOne();
+
+    if (scopedExists) {
+      return product;
+    }
+
+    const variantCount = await this.getVariantRepo(manager).count({
+      where: {
+        product: { id: productId, tenant: { id: tenantId } },
+      },
+    });
+
+    // Ilk varyant olusturma senaryosunda store baglantisi henuz olmayabilir.
+    if (variantCount === 0) {
+      return product;
+    }
+
+    throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
   }
 
   async listVariants(
@@ -1286,6 +1361,21 @@ export class ProductService {
       existingVariants.map((variant) => variant.id),
       manager,
     );
+
+    const tokenStoreId = this.appContext.getStoreId();
+    if (tokenStoreId) {
+      const scopedStore = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      const allStoreIds = await this.getTenantStoreIds(manager);
+
+      for (const storeId of allStoreIds) {
+        if (!storeActiveMap.has(storeId)) {
+          storeActiveMap.set(storeId, storeId === scopedStore.id);
+        }
+        if (!storeLinkMap.has(storeId)) {
+          storeLinkMap.set(storeId, storeId === scopedStore.id);
+        }
+      }
+    }
 
     for (const combination of combinations) {
       const desiredName = combination.values
