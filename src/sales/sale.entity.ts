@@ -32,6 +32,9 @@ export class Sale extends AuditableEntity {
   @Column({ type: 'varchar', nullable: true })
   receiptNo?: string | null;
 
+  @Column({ type: 'varchar', length: 3, nullable: true })
+  currency?: string | null;
+
   // Müşteri bilgileri (çok basit)
   @Column({ nullable: true })
   name?: string;

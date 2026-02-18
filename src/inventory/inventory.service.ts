@@ -206,7 +206,12 @@ export class InventoryService {
       false,
     );
 
-    summary.quantity = Number(summary.quantity) + quantityDelta;
+    const delta = Number(quantityDelta);
+    if (!Number.isFinite(delta)) {
+      throw new BadRequestException(InventoryErrors.INVALID_QUANTITY);
+    }
+
+    summary.quantity = Number(summary.quantity) + delta;
     summary.updatedById = this.getUserIdOrThrow();
 
     return repo.save(summary);
@@ -425,7 +430,8 @@ export class InventoryService {
     lineTotal?: number;
     campaignCode?: string;
   }, manager?: EntityManager): Promise<InventoryMovement> {
-    if (params.quantity <= 0) {
+    const quantity = Number(params.quantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new BadRequestException(InventoryErrors.INVALID_QUANTITY);
     }
 
@@ -438,7 +444,7 @@ export class InventoryService {
       store,
       variant,
       type: MovementType.IN, // iade = stok geri girişi
-      quantity: params.quantity, // pozitif
+      quantity, // pozitif
 
       reference: `SALE-RETURN-${params.saleId}`,
       meta: {

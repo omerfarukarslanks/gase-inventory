@@ -184,17 +184,17 @@ export class SalesService {
 
     let totalUnitPrice = 0;
     let totalLineTotal = 0;
+    const saleCurrencies = new Set<string>();
 
     const saleLines: SaleLine[] = [];
 
     // 2) Satırları oluştur + stok düş
     for (const lineDto of dto.lines) {
       const variant = variantMap.get(lineDto.productVariantId)!;
+      const priceParams = effectivePrices.get(lineDto.productVariantId);
 
       // 🔹 1) PriceService ile mağaza bazlı efektif parametreleri al
       if (lineDto.unitPrice == null) {
-        const priceParams = effectivePrices.get(lineDto.productVariantId);
-
         lineDto.unitPrice = priceParams?.unitPrice ?? 0;
 
         if (lineDto.taxPercent == null && priceParams?.taxPercent != null) {
@@ -216,10 +216,6 @@ export class SalesService {
           lineDto.discountAmount = priceParams.discountAmount;
         }
 
-        if (!lineDto.currency && priceParams?.currency) {
-          lineDto.currency = priceParams.currency;
-        }
-
         if (
           lineDto.taxPercent == null &&
           lineDto.taxAmount == null &&
@@ -232,6 +228,8 @@ export class SalesService {
           lineDto.lineTotal = priceParams.lineTotal;
         }
       }
+
+      lineDto.currency = lineDto.currency ?? priceParams?.currency ?? 'TRY';
 
       const {
         net,
@@ -267,6 +265,7 @@ export class SalesService {
 
       const savedLine = await saleLineRepo.save(line);
       saleLines.push(savedLine);
+      saleCurrencies.add(lineDto.currency);
 
       totalUnitPrice += net;
       totalLineTotal += lineTotal;
@@ -296,6 +295,9 @@ export class SalesService {
     // 4) Satış toplamlarını güncelle
     savedSale.unitPrice = totalUnitPrice;
     savedSale.lineTotal = totalLineTotal;
+    savedSale.currency = saleCurrencies.size === 1
+      ? Array.from(saleCurrencies)[0]
+      : null;
     savedSale.updatedById = userId;
 
     return saleRepo.save(savedSale);
@@ -378,7 +380,7 @@ export class SalesService {
     return saleRepo.save(sale);
   }
 
-  async findOne(id: string, manager?: EntityManager): Promise<Sale> {
+  async findOne(id: string, manager?: EntityManager): Promise<any> {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
     const sale = await this.getSaleRepo(manager).findOne({
@@ -386,14 +388,63 @@ export class SalesService {
         id,
         tenant: { id: tenantId },
       },
-      relations: ['store', 'lines', 'lines.productVariant'],
+      relations: ['store', 'lines', 'lines.productVariant', 'lines.productVariant.product'],
     });
 
     if (!sale) {
       throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
     }
 
-    return sale;
+    return {
+      id: sale.id,
+      createdAt: sale.createdAt,
+      createdById: sale.createdById,
+      updatedAt: sale.updatedAt,
+      updatedById: sale.updatedById,
+      store: sale.store
+        ? {
+            id: sale.store.id,
+            name: sale.store.name,
+            address: sale.store.address ?? null,
+            slug: sale.store.slug ?? null,
+          }
+        : null,
+      status: sale.status,
+      receiptNo: sale.receiptNo ?? null,
+      currency: sale.currency ?? null,
+      name: sale.name ?? null,
+      surname: sale.surname ?? null,
+      phoneNumber: sale.phoneNumber ?? null,
+      email: sale.email ?? null,
+      meta: sale.meta ?? null,
+      unitPrice: String(sale.unitPrice ?? 0),
+      lineTotal: String(sale.lineTotal ?? 0),
+      lines: (sale.lines ?? []).map((line) => ({
+        id: line.id,
+        productId: line.productVariant?.product?.id ?? null,
+        productName: line.productVariant?.product?.name ?? null,
+        productVariant: line.productVariant
+          ? {
+              id: line.productVariant.id,
+              name: line.productVariant.name,
+              code: line.productVariant.code,
+            }
+          : null,
+        quantity: String(line.quantity ?? 0),
+        currency: line.currency ?? null,
+        unitPrice: line.unitPrice != null ? String(line.unitPrice) : null,
+        discountPercent:
+          line.discountPercent != null ? String(line.discountPercent) : null,
+        discountAmount:
+          line.discountAmount != null ? String(line.discountAmount) : null,
+        taxPercent: line.taxPercent != null ? String(line.taxPercent) : null,
+        taxAmount: line.taxAmount != null ? String(line.taxAmount) : null,
+        lineTotal: line.lineTotal != null ? String(line.lineTotal) : null,
+        campaignCode: line.campaignCode ?? null,
+      })),
+      cancelledAt: sale.cancelledAt ?? null,
+      cancelledById: sale.cancelledById ?? null,
+    };
   }
 
   async findAllForStore(
@@ -410,10 +461,7 @@ export class SalesService {
     } else {
       requestedStoreIds = Array.from(
         new Set(
-          [
-            ...(query.storeId ? [query.storeId] : []),
-            ...(query.storeIds ?? []),
-          ]
+          (query.storeIds ?? [])
             .map((id) => id?.trim())
             .filter((id): id is string => Boolean(id)),
         ),
@@ -440,6 +488,7 @@ export class SalesService {
       .select([
         'sale.id',
         'sale.receiptNo',
+        'sale.currency',
         'sale.status',
         'sale.unitPrice',
         'sale.lineTotal',
@@ -456,6 +505,66 @@ export class SalesService {
 
     if (requestedStoreIds.length > 0) {
       qb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: requestedStoreIds });
+    }
+
+    if (query.receiptNo?.trim()) {
+      qb.andWhere('sale.receiptNo ILIKE :receiptNo', {
+        receiptNo: `%${query.receiptNo.trim()}%`,
+      });
+    }
+
+    if (query.name?.trim()) {
+      qb.andWhere('sale.name ILIKE :name', { name: `%${query.name.trim()}%` });
+    }
+
+    if (query.surname?.trim()) {
+      qb.andWhere('sale.surname ILIKE :surname', {
+        surname: `%${query.surname.trim()}%`,
+      });
+    }
+
+    if (query.status) {
+      qb.andWhere('sale.status = :status', { status: query.status });
+    }
+
+    if (
+      query.minUnitPrice !== undefined &&
+      query.maxUnitPrice !== undefined &&
+      query.minUnitPrice > query.maxUnitPrice
+    ) {
+      throw new BadRequestException('minUnitPrice, maxUnitPrice değerinden büyük olamaz');
+    }
+
+    if (
+      query.minLineTotal !== undefined &&
+      query.maxLineTotal !== undefined &&
+      query.minLineTotal > query.maxLineTotal
+    ) {
+      throw new BadRequestException('minLineTotal, maxLineTotal değerinden büyük olamaz');
+    }
+
+    if (query.minUnitPrice !== undefined) {
+      qb.andWhere('sale.unitPrice >= :minUnitPrice', {
+        minUnitPrice: query.minUnitPrice,
+      });
+    }
+
+    if (query.maxUnitPrice !== undefined) {
+      qb.andWhere('sale.unitPrice <= :maxUnitPrice', {
+        maxUnitPrice: query.maxUnitPrice,
+      });
+    }
+
+    if (query.minLineTotal !== undefined) {
+      qb.andWhere('sale.lineTotal >= :minLineTotal', {
+        minLineTotal: query.minLineTotal,
+      });
+    }
+
+    if (query.maxLineTotal !== undefined) {
+      qb.andWhere('sale.lineTotal <= :maxLineTotal', {
+        maxLineTotal: query.maxLineTotal,
+      });
     }
 
     if (query.includeLines) {
