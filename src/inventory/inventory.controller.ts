@@ -16,7 +16,6 @@ import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { ListMovementsQueryDto } from './dto/list-movements.dto';
 import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
-import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -57,15 +56,9 @@ export class InventoryController {
 
   // Stok düzeltme
   @Post('adjust')
-  @ApiOperation({ summary: 'Stok düzeltme' })
+  @ApiOperation({ summary: 'Stok düzeltme (tekil veya items ile toplu)' })
   adjust(@Body() dto: AdjustStockDto) {
     return this.inventoryService.adjustStock(dto);
-  }
-
-  @Post('adjust/bulk')
-  @ApiOperation({ summary: 'Toplu stok düzeltme' })
-  bulkAdjust(@Body() dto: BulkAdjustStockDto) {
-    return this.inventoryService.bulkAdjustStock(dto);
   }
 
   // Hareket geçmişi

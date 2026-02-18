@@ -14,7 +14,7 @@ import { AppContextService } from '../common/context/app-context.service';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { SellStockDto } from './dto/sell-stock.dto';
-import { AdjustStockDto } from './dto/adjust-stock.dto';
+import { AdjustStockDto, AdjustStockItemDto } from './dto/adjust-stock.dto';
 import { InventoryErrors } from 'src/common/errors/inventory.errors';
 import { StoreVariantStock } from './store-variant-stock.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
@@ -23,7 +23,6 @@ import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
-import { BulkAdjustStockDto } from './dto/bulk-adjust-stock.dto';
 
 @Injectable()
 export class InventoryService {
@@ -212,6 +211,107 @@ export class InventoryService {
     return repo.save(summary);
   }
 
+  private async ensureStoreProductVariantsScopeForStockAction(
+    tenantId: string,
+    storeId: string,
+    variantId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repo = this.getStockSummaryRepository(manager);
+    const userId = this.getUserIdOrThrow();
+    const targetVariant = await this.getTenantVariantOrThrow(variantId, manager);
+
+    const variantRows = await this.getVariantRepo(manager)
+      .createQueryBuilder('variant')
+      .innerJoin('variant.product', 'product')
+      .select('variant.id', 'id')
+      .where('product.id = :productId', { productId: targetVariant.product.id })
+      .andWhere('product.tenantId = :tenantId', { tenantId })
+      .getRawMany<{ id: string }>();
+
+    const productVariantIds = variantRows.map((row) => row.id);
+    if (productVariantIds.length === 0) {
+      return;
+    }
+
+    const existingRows = await repo.find({
+      where: {
+        tenant: { id: tenantId },
+        store: { id: storeId },
+        productVariant: { id: In(productVariantIds) },
+      },
+      relations: ['productVariant'],
+    });
+
+    const existingByVariantId = new Map<string, StoreVariantStock>();
+    for (const row of existingRows) {
+      if (row.productVariant?.id) {
+        existingByVariantId.set(row.productVariant.id, row);
+      }
+    }
+
+    const hasAnyActiveStoreLink = existingRows.some((row) => row.isActiveStore === true);
+    const rowsToSave: StoreVariantStock[] = [];
+
+    for (const productVariantId of productVariantIds) {
+      let row = existingByVariantId.get(productVariantId);
+      if (!row) {
+        row = repo.create({
+          tenant: { id: tenantId } as Tenant,
+          store: { id: storeId } as Store,
+          productVariant: { id: productVariantId } as ProductVariant,
+          isActiveStore: true,
+          isActive: false,
+          quantity: 0,
+          createdById: userId,
+          updatedById: userId,
+        });
+        existingByVariantId.set(productVariantId, row);
+        rowsToSave.push(row);
+        continue;
+      }
+
+      let changed = false;
+      if (!row.isActiveStore) {
+        row.isActiveStore = true;
+        changed = true;
+      }
+      if (!hasAnyActiveStoreLink && row.isActive) {
+        row.isActive = false;
+        changed = true;
+      }
+
+      if (changed) {
+        row.updatedById = userId;
+        rowsToSave.push(row);
+      }
+    }
+
+    const targetRow = existingByVariantId.get(variantId);
+    if (targetRow) {
+      let changed = false;
+      if (!targetRow.isActiveStore) {
+        targetRow.isActiveStore = true;
+        changed = true;
+      }
+      if (!targetRow.isActive) {
+        targetRow.isActive = true;
+        changed = true;
+      }
+
+      if (changed) {
+        targetRow.updatedById = userId;
+        if (!rowsToSave.includes(targetRow)) {
+          rowsToSave.push(targetRow);
+        }
+      }
+    }
+
+    if (rowsToSave.length > 0) {
+      await repo.save(rowsToSave);
+    }
+  }
+
   // ---- Hareket yazma helper'ı ----
 
   private async createMovement(
@@ -365,41 +465,50 @@ export class InventoryService {
     dto: ReceiveStockDto,
     manager?: EntityManager,
   ): Promise<InventoryMovement> {
-    if (dto.quantity <= 0) {
-      throw new BadRequestException(InventoryErrors.INVALID_QUANTITY);
-    }
+    return this.runInTransaction(manager, async (txManager) => {
+      if (dto.quantity <= 0) {
+        throw new BadRequestException(InventoryErrors.INVALID_QUANTITY);
+      }
 
-    const tenantId = this.getTenantIdOrThrow();
-    const store = await this.getTenantStoreOrThrow(dto.storeId, manager);
-    const variant = await this.getTenantVariantOrThrow(dto.productVariantId, manager);
+      const tenantId = this.getTenantIdOrThrow();
+      const store = await this.getTenantStoreOrThrow(dto.storeId, txManager);
+      const variant = await this.getTenantVariantOrThrow(dto.productVariantId, txManager);
 
-    const product = variant.product; // relations aldığın yerde ürün zaten gelir
-
-    const currency = dto.currency ?? product.defaultCurrency ?? 'TRY';
-    const unitPrice = dto.unitPrice ?? product.defaultPurchasePrice ?? 0;
-    const taxPercent = dto.taxPercent ?? product.defaultTaxPercent ?? 0;
-
-    return this.createMovement(
-      {
+      await this.ensureStoreProductVariantsScopeForStockAction(
         tenantId,
-        store,
-        variant,
-        type: MovementType.IN,
-        quantity: dto.quantity, // IN -> pozitif
-        reference: dto.reference,
-        meta: dto.meta,
+        store.id,
+        variant.id,
+        txManager,
+      );
 
-        currency,
-        unitPrice,
-        taxPercent,
-        discountPercent: dto.discountPercent,
-        discountAmount: dto.discountAmount,
-        taxAmount: dto.taxAmount,
-        lineTotal: dto.lineTotal,
-        campaignCode: dto.campaignCode,
-      },
-      manager,
-    );
+      const product = variant.product; // relations aldığın yerde ürün zaten gelir
+
+      const currency = dto.currency ?? product.defaultCurrency ?? 'TRY';
+      const unitPrice = dto.unitPrice ?? product.defaultPurchasePrice ?? 0;
+      const taxPercent = dto.taxPercent ?? product.defaultTaxPercent ?? 0;
+
+      return this.createMovement(
+        {
+          tenantId,
+          store,
+          variant,
+          type: MovementType.IN,
+          quantity: dto.quantity, // IN -> pozitif
+          reference: dto.reference,
+          meta: dto.meta,
+
+          currency,
+          unitPrice,
+          taxPercent,
+          discountPercent: dto.discountPercent,
+          discountAmount: dto.discountAmount,
+          taxAmount: dto.taxAmount,
+          lineTotal: dto.lineTotal,
+          campaignCode: dto.campaignCode,
+        },
+        txManager,
+      );
+    });
   }
 
   async sellFromStore(
@@ -468,12 +577,10 @@ export class InventoryService {
     });
   }
 
-/**
-   * Sayım sonrası fiili stok ile sistem stokunu eşitlemek için:
-   * newQuantity = hedef stok
-   * ADJUSTMENT movement = newQuantity - currentStock
-   */
-  async adjustStock(dto: AdjustStockDto, manager?: EntityManager): Promise<{
+  private async adjustStockSingle(
+    dto: AdjustStockItemDto,
+    manager?: EntityManager,
+  ): Promise<{
     movement: InventoryMovement | null;
     previousQuantity: number;
     newQuantity: number;
@@ -523,6 +630,120 @@ export class InventoryService {
       newQuantity: dto.newQuantity,
       difference: diff,
     };
+  }
+
+  /**
+   * Tek endpoint ile stok düzeltme:
+   * - items gönderilirse mağaza bazlı toplu işlem
+   * - items yoksa tekil/toplu-store senaryosu
+   */
+  async adjustStock(
+    dto: AdjustStockDto,
+    manager?: EntityManager,
+  ): Promise<
+    | {
+      movement: InventoryMovement | null;
+      previousQuantity: number;
+      newQuantity: number;
+      difference: number;
+    }
+    | {
+      movement: InventoryMovement | null;
+      previousQuantity: number;
+      newQuantity: number;
+      difference: number;
+    }[]
+  > {
+    return this.runInTransaction(manager, async (txManager) => {
+      const tenantId = this.getTenantIdOrThrow();
+      const hasItems = Array.isArray(dto.items) && dto.items.length > 0;
+
+      if (hasItems) {
+        const results: {
+          movement: InventoryMovement | null;
+          previousQuantity: number;
+          newQuantity: number;
+          difference: number;
+        }[] = [];
+
+        for (const item of dto.items!) {
+          await this.ensureStoreProductVariantsScopeForStockAction(
+            tenantId,
+            item.storeId,
+            item.productVariantId,
+            txManager,
+          );
+          const result = await this.adjustStockSingle(item, txManager);
+          results.push(result);
+        }
+
+        return results;
+      }
+
+      if (!dto.productVariantId || dto.newQuantity === undefined) {
+        throw new BadRequestException(
+          'items gonderilmiyorsa productVariantId ve newQuantity zorunludur.',
+        );
+      }
+
+      let targetStoreIds: string[] = [];
+
+      if (dto.applyToAllStores === true) {
+        const stores = await this.getStoreRepo(txManager).find({
+          where: {
+            tenant: { id: tenantId },
+            isActive: true,
+          },
+          select: { id: true },
+        });
+
+        if (stores.length === 0) {
+          throw new NotFoundException(InventoryErrors.STORE_NOT_FOUND_FOR_TENANT);
+        }
+
+        targetStoreIds = stores.map((store) => store.id);
+      } else if (dto.storeId) {
+        await this.getTenantStoreOrThrow(dto.storeId, txManager);
+        targetStoreIds = [dto.storeId];
+      } else {
+        const contextStoreId = this.appContext.getStoreId();
+        if (!contextStoreId) {
+          throw new BadRequestException(
+            'storeId yoksa token icinde storeId olmali veya applyToAllStores=true gonderilmelidir.',
+          );
+        }
+        targetStoreIds = [contextStoreId];
+      }
+
+      const results: {
+        movement: InventoryMovement | null;
+        previousQuantity: number;
+        newQuantity: number;
+        difference: number;
+      }[] = [];
+
+      for (const storeId of targetStoreIds) {
+        await this.ensureStoreProductVariantsScopeForStockAction(
+          tenantId,
+          storeId,
+          dto.productVariantId,
+          txManager,
+        );
+        const result = await this.adjustStockSingle(
+          {
+            storeId,
+            productVariantId: dto.productVariantId,
+            newQuantity: dto.newQuantity,
+            reference: dto.reference,
+            meta: dto.meta,
+          },
+          txManager,
+        );
+        results.push(result);
+      }
+
+      return results.length === 1 ? results[0] : results;
+    });
   }
 
 
@@ -1179,34 +1400,6 @@ export class InventoryService {
       for (const item of dto.items) {
         const movement = await this.receiveStock(item, txManager);
         results.push(movement);
-      }
-
-      return results;
-    });
-  }
-
-  async bulkAdjustStock(
-    dto: BulkAdjustStockDto,
-    manager?: EntityManager,
-  ): Promise<
-    {
-      movement: InventoryMovement | null;
-      previousQuantity: number;
-      newQuantity: number;
-      difference: number;
-    }[]
-  > {
-    return this.runInTransaction(manager, async (txManager) => {
-      const results: {
-        movement: InventoryMovement | null;
-        previousQuantity: number;
-        newQuantity: number;
-        difference: number;
-      }[] = [];
-
-      for (const item of dto.items) {
-        const result = await this.adjustStock(item, txManager);
-        results.push(result);
       }
 
       return results;
