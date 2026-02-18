@@ -121,10 +121,8 @@ export class ReportsService {
       relations: ['lines', 'lines.productVariant', 'lines.productVariant.product'],
     });
 
-    let totalNet = 0;
-    let totalDiscount = 0;
-    let totalTax = 0;
-    let totalGross = 0;
+    let totalUnitPrice = 0;
+    let totalLineTotal = 0;
 
     // Ürün bazlı satış özetini de çıkaralım (optional ama çok kullanışlı)
     const variantSummary = new Map<
@@ -143,10 +141,8 @@ export class ReportsService {
     >();
 
     for (const sale of sales) {
-      totalNet += Number(sale.totalNet);
-      totalDiscount += Number(sale.totalDiscount);
-      totalTax += Number(sale.totalTax);
-      totalGross += Number(sale.totalGross);
+      totalUnitPrice += Number(sale.unitPrice);
+      totalLineTotal += Number(sale.lineTotal);
 
       for (const line of sale.lines) {
         const key = line.productVariant.id;
@@ -189,10 +185,8 @@ export class ReportsService {
         end: params.endDate,
       },
       totals: {
-        totalNet,
-        totalDiscount,
-        totalTax,
-        totalGross,
+        totalUnitPrice,
+        totalLineTotal,
       },
       byVariant: Array.from(variantSummary.values()),
     };

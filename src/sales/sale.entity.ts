@@ -18,6 +18,7 @@ export enum SaleStatus {
 
 @Entity({ name: 'sales' })
 @Index(['tenant', 'store', 'createdAt'])
+@Index('ux_sales_tenant_receipt_no', ['tenant', 'receiptNo'], { unique: true })
 export class Sale extends AuditableEntity {
   @ManyToOne(() => Tenant, { eager: true })
   tenant: Tenant;
@@ -28,31 +29,31 @@ export class Sale extends AuditableEntity {
   @Column({ type: 'enum', enum: SaleStatus, default: SaleStatus.CONFIRMED })
   status: SaleStatus;
 
+  @Column({ type: 'varchar', nullable: true })
+  receiptNo?: string | null;
+
   // Müşteri bilgileri (çok basit)
   @Column({ nullable: true })
-  customerName?: string;
+  name?: string;
 
   @Column({ nullable: true })
-  customerPhone?: string;
+  surname?: string;
 
   @Column({ nullable: true })
-  customerEmail?: string;
+  phoneNumber?: string;
 
   @Column({ nullable: true })
-  note?: string;
+  email?: string;
+
+  @Column({ type: 'jsonb', nullable: true })
+  meta?: Record<string, any>;
 
   // Toplamlar
   @Column({ type: 'numeric', default: 0 })
-  totalNet: number;
+  unitPrice: number;
 
   @Column({ type: 'numeric', default: 0 })
-  totalDiscount: number;
-
-  @Column({ type: 'numeric', default: 0 })
-  totalTax: number;
-
-  @Column({ type: 'numeric', default: 0 })
-  totalGross: number; // nihai toplam
+  lineTotal: number;
 
   @OneToMany(() => SaleLine, (line) => line.sale, { cascade: true })
   lines: SaleLine[];

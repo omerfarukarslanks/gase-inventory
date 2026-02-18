@@ -23,6 +23,7 @@ import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
+import { StockSummaryDto } from './dto/stock-summary.dto';
 
 @Injectable()
 export class InventoryService {
@@ -962,8 +963,8 @@ export class InventoryService {
    * - Tüm mağazalar (stores) üzerinden
    * - productVariantId bazında toplam quantity
    */
-  async getTenantStockSummary(
-    query?: OptionalPaginationQueryDto,
+  async getStockSummary(
+    body?: StockSummaryDto,
     manager?: EntityManager,
   ): Promise<
     {
@@ -993,7 +994,7 @@ export class InventoryService {
           }[];
         }[];
       }[];
-      meta: {
+      meta?: {
         total: number;
         limit: number;
         page: number;
@@ -1003,22 +1004,22 @@ export class InventoryService {
     }
   > {
     const tenantId = this.getTenantIdOrThrow();
-    const rawStoreIds = Array.isArray(query?.storeIds)
-      ? query.storeIds
-      : query?.storeIds
-        ? [query.storeIds as unknown as string]
-        : [];
-    const requestedStoreIds = Array.from(
-      new Set(
-        [
-          ...rawStoreIds,
-          ...(query?.storeId ? [query.storeId] : []),
-        ]
-          .map((id) => id?.trim())
-          .filter((id): id is string => Boolean(id)),
-      ),
-    );
-    const search = query?.search?.trim();
+    const contextStoreId = this.appContext.getStoreId();
+    const search = body?.search?.trim();
+    let requestedStoreIds: string[] = [];
+
+    if (contextStoreId) {
+      await this.getTenantStoreOrThrow(contextStoreId, manager);
+      requestedStoreIds = [contextStoreId];
+    } else {
+      requestedStoreIds = Array.from(
+        new Set(
+          (body?.storeIds ?? [])
+            .map((id) => id?.trim())
+            .filter((id): id is string => Boolean(id)),
+        ),
+      );
+    }
 
     if (requestedStoreIds.length) {
       const stores = await this.getStoreRepo(manager).find({
@@ -1078,7 +1079,7 @@ export class InventoryService {
 
     if (search) {
       qb.andWhere(
-        '(product.name ILIKE :search OR variant.name ILIKE :search OR variant.code ILIKE :search OR store.name ILIKE :search)',
+        '(product.name ILIKE :search OR variant.name ILIKE :search OR variant.code ILIKE :search)',
         { search: `%${search}%` },
       );
     }
@@ -1189,18 +1190,19 @@ export class InventoryService {
     const totalQuantity = items.reduce((sum, item) => sum + item.totalQuantity, 0);
 
     const total = items.length;
-    const parsedPage = query?.page !== undefined ? Number(query.page) : undefined;
-    const parsedLimit = query?.limit !== undefined ? Number(query.limit) : undefined;
-    const hasPagination =
-      Number.isFinite(parsedPage) || Number.isFinite(parsedLimit);
-    const page = hasPagination
-      ? Math.max(1, Math.trunc(parsedPage ?? 1))
-      : 1;
-    const limit = hasPagination
-      ? Math.min(100, Math.max(1, Math.trunc(parsedLimit ?? 10)))
-      : total;
-    const skip = hasPagination ? (page - 1) * limit : 0;
-    const data = hasPagination ? items.slice(skip, skip + limit) : items;
+    const hasPagination = body?.hasPagination === true;
+
+    if (!hasPagination) {
+      return {
+        data: items,
+        totalQuantity,
+      };
+    }
+
+    const page = Math.max(1, Math.trunc(body?.page ?? 1));
+    const limit = Math.min(100, Math.max(1, Math.trunc(body?.limit ?? 10)));
+    const skip = (page - 1) * limit;
+    const data = items.slice(skip, skip + limit);
 
     return {
       data,
@@ -1208,7 +1210,7 @@ export class InventoryService {
         total,
         limit,
         page,
-        totalPages: hasPagination ? Math.ceil(total / limit) : (total > 0 ? 1 : 0),
+        totalPages: Math.ceil(total / limit),
       },
       totalQuantity,
     };

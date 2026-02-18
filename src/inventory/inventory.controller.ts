@@ -17,6 +17,7 @@ import { ListMovementsQueryDto } from './dto/list-movements.dto';
 import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
+import { StockSummaryDto } from './dto/stock-summary.dto';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('Inventory')
@@ -85,18 +86,14 @@ export class InventoryController {
     return this.inventoryService.getStockForVariantInStore(storeId, variantId);
   }
 
-  // Belirli store için variant bazlı stok özeti
-  @Get('store/:storeId/stock')
-  @ApiOperation({ summary: 'Store bazlı stok özeti (varyant bazında)' })
-  getStoreStockSummary(@Param('storeId') storeId: string) {
-    return this.inventoryService.getStoreStockSummary(storeId);
-  }
-
-  // Tenant bazlı stok özeti
-  @Get('tenant/stock')
-  @ApiOperation({ summary: 'Tenant bazlı stok özeti (varyant bazında)' })
-  getTenantStockSummary(@Query() query: OptionalPaginationQueryDto) {
-    return this.inventoryService.getTenantStockSummary(query);
+  // Tek endpoint: context store veya storeIds filtresi ile stok özeti
+  @Post('stock/summary')
+  @ApiOperation({
+    summary:
+      'Stok ozeti (context storeId > body.storeIds > tenant tum storelar; page/limit varsa paginated)',
+  })
+  getStockSummary(@Body() body: StockSummaryDto) {
+    return this.inventoryService.getStockSummary(body);
   }
 
   // GET /inventory/variant/:variantId/by-store

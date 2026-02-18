@@ -95,6 +95,16 @@ export class SalesService {
     return variant;
   }
 
+  private buildSaleReceiptNo(saleId: string, createdAt?: Date): string {
+    const date = createdAt ?? new Date();
+    const yyyy = date.getUTCFullYear();
+    const mm = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(date.getUTCDate()).padStart(2, '0');
+    const shortId = saleId.replace(/-/g, '').slice(0, 8).toUpperCase();
+
+    return `SF-${yyyy}${mm}${dd}-${shortId}`;
+  }
+
   // ---- Satış oluştur + stok düş ----
 
   async createSale(dto: CreateSaleDto, manager?: EntityManager): Promise<Sale> {
@@ -124,7 +134,10 @@ export class SalesService {
     const saleRepo = manager.getRepository(Sale);
     const saleLineRepo = manager.getRepository(SaleLine);
 
-    const store = await this.getTenantStoreOrThrow(dto.storeId, manager);
+    const store = await this.getTenantStoreOrThrow(
+      dto.storeId ?? this.appContext.getStoreIdOrThrow(),
+      manager,
+    );
 
     const variantIds = [...new Set(dto.lines.map((line) => line.productVariantId))];
 
@@ -155,20 +168,22 @@ export class SalesService {
       tenant: { id: tenantId } as any,
       store: { id: store.id } as any,
       status: SaleStatus.CONFIRMED,
-      customerName: dto.customerName,
-      customerPhone: dto.customerPhone,
-      customerEmail: dto.customerEmail,
-      note: dto.note,
+      name: dto.name,
+      surname: dto.surname,
+      phoneNumber: dto.phoneNumber,
+      email: dto.email,
+      meta: dto.meta,
       createdById: userId,
       updatedById: userId,
     });
 
     const savedSale = await saleRepo.save(sale);
+    savedSale.receiptNo = this.buildSaleReceiptNo(savedSale.id, savedSale.createdAt);
+    savedSale.updatedById = userId;
+    await saleRepo.save(savedSale);
 
-    let totalNet = 0;
-    let totalDiscount = 0;
-    let totalTax = 0;
-    let totalGross = 0;
+    let totalUnitPrice = 0;
+    let totalLineTotal = 0;
 
     const saleLines: SaleLine[] = [];
 
@@ -194,6 +209,7 @@ export class SalesService {
         }
 
         if (
+          lineDto.discountPercent == null &&
           lineDto.discountAmount == null &&
           priceParams?.discountAmount != null
         ) {
@@ -204,7 +220,11 @@ export class SalesService {
           lineDto.currency = priceParams.currency;
         }
 
-        if (lineDto.taxAmount == null && priceParams?.taxAmount != null) {
+        if (
+          lineDto.taxPercent == null &&
+          lineDto.taxAmount == null &&
+          priceParams?.taxAmount != null
+        ) {
           lineDto.taxAmount = priceParams.taxAmount;
         }
 
@@ -223,10 +243,10 @@ export class SalesService {
       } = calculateLineAmounts({
         quantity: lineDto.quantity,
         unitPrice: lineDto.unitPrice ?? 0,
-        discountPercent: lineDto.discountPercent ?? 0,
-        discountAmount: lineDto.discountAmount ?? 0,
-        taxPercent: lineDto.taxPercent ?? 0,
-        taxAmount: lineDto.taxAmount ?? 0,
+        discountPercent: lineDto.discountPercent ?? null,
+        discountAmount: lineDto.discountPercent != null ? null : (lineDto.discountAmount ?? null),
+        taxPercent: lineDto.taxPercent ?? null,
+        taxAmount: lineDto.taxPercent != null ? null : (lineDto.taxAmount ?? null),
       });
 
       const line = saleLineRepo.create({
@@ -248,17 +268,15 @@ export class SalesService {
       const savedLine = await saleLineRepo.save(line);
       saleLines.push(savedLine);
 
-      totalNet += net;
-      totalDiscount += discountAmount;
-      totalTax += taxAmount;
-      totalGross += lineTotal;
+      totalUnitPrice += net;
+      totalLineTotal += lineTotal;
 
       // 3) Stok düş (OUT) – transaction-aware InventoryService
       const sellDto: SellStockDto = {
         storeId: store.id,
         productVariantId: variant.id,
         quantity: lineDto.quantity,
-        reference: `SALE-${savedSale.id}`,
+        reference: savedSale.receiptNo ?? `SALE-${savedSale.id}`,
         meta: { saleId: savedSale.id, saleLineId: savedLine.id },
         currency: lineDto.currency,
         unitPrice: lineDto.unitPrice,
@@ -276,10 +294,8 @@ export class SalesService {
     }
 
     // 4) Satış toplamlarını güncelle
-    savedSale.totalNet = totalNet;
-    savedSale.totalDiscount = totalDiscount;
-    savedSale.totalTax = totalTax;
-    savedSale.totalGross = totalGross;
+    savedSale.unitPrice = totalUnitPrice;
+    savedSale.lineTotal = totalLineTotal;
     savedSale.updatedById = userId;
 
     return saleRepo.save(savedSale);
@@ -393,15 +409,15 @@ export class SalesService {
       .leftJoin('sale.store', 'store')
       .select([
         'sale.id',
+        'sale.receiptNo',
         'sale.status',
-        'sale.totalNet',
-        'sale.totalDiscount',
-        'sale.totalTax',
-        'sale.totalGross',
-        'sale.customerName',
-        'sale.customerPhone',
-        'sale.customerEmail',
-        'sale.note',
+        'sale.unitPrice',
+        'sale.lineTotal',
+        'sale.name',
+        'sale.surname',
+        'sale.phoneNumber',
+        'sale.email',
+        'sale.meta',
         'sale.createdAt',
       ])
       .addSelect(['store.id', 'store.name', 'store.code'])

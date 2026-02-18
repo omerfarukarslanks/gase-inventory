@@ -1,33 +1,48 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger/dist/decorators/api-property.decorator';
 import { CreateSaleLineDto } from './create-sale-line.dto';
-import { IsEmail, IsNotEmpty, IsUUID, IsString, IsOptional } from 'class-validator';
+import {
+  IsEmail,
+  IsNotEmpty,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateSaleDto {
-  @ApiProperty({ description: 'Satış yapılacak mağaza ID' })
-  @IsUUID('4', { message: 'storeId geçerli bir UUID olmalıdır' })
-  @IsNotEmpty({ message: 'storeId boş olamaz' })
-  storeId: string;
-
-  @ApiPropertyOptional({ description: 'Müşteri adı' , example: 'Ahmet Yılmaz' })
+  @ApiPropertyOptional({ description: 'Satış yapılacak mağaza ID (gönderilmezse token/context storeId kullanılır)' })
   @IsOptional()
-  @IsString({ message: 'customerName metni olmalıdır' })
-  customerName?: string;
+  @IsUUID('4', { message: 'storeId geçerli bir UUID olmalıdır' })
+  storeId?: string;
+
+  @ApiProperty({ description: 'Müşteri adı', example: 'Ahmet' })
+  @IsString({ message: 'name metni olmalıdır' })
+  @IsNotEmpty({ message: 'name boş olamaz' })
+  name: string;
+
+  @ApiProperty({ description: 'Müşteri soyadı', example: 'Yılmaz' })
+  @IsString({ message: 'surname metni olmalıdır' })
+  @IsNotEmpty({ message: 'surname boş olamaz' })
+  surname: string;
 
   @ApiPropertyOptional({ description: 'Müşteri telefon numarası', example: '+905301234567' })
   @IsOptional()
-  @IsString({ message: 'customerPhone metni olmalıdır' })
-  customerPhone?: string;
+  @IsString({ message: 'phoneNumber metni olmalıdır' })
+  phoneNumber?: string;
 
   @ApiPropertyOptional({ description: 'Müşteri e-posta adresi', example: 'ahmet.yilmaz@example.com' })
   @IsOptional()
-  @IsString({ message: 'customerEmail metni olmalıdır' })
-  @IsEmail({}, { message: 'customerEmail geçerli bir e-posta olmalıdır' })
-  customerEmail?: string;
+  @IsString({ message: 'email metni olmalıdır' })
+  @IsEmail({}, { message: 'email geçerli bir e-posta olmalıdır' })
+  email?: string;
 
-  @ApiPropertyOptional({ description: 'Not', example: 'Hızlı teslimat' })
+  @ApiPropertyOptional({
+    description: 'Dinamik satış meta bilgileri',
+    example: { source: 'POS', note: 'Hızlı teslimat' },
+  })
   @IsOptional()
-  @IsString({ message: 'note metni olmalıdır' })
-  note?: string;
+  @IsObject({ message: 'meta object olmalıdır' })
+  meta?: Record<string, any>;
 
   @ApiProperty({
     type: [CreateSaleLineDto],
