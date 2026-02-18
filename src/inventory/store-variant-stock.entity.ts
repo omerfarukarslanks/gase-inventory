@@ -23,6 +23,12 @@ export class StoreVariantStock extends AuditableEntity {
   @ManyToOne(() => ProductVariant)
   productVariant: ProductVariant;
 
+  @Column({ default: true })
+  isActiveStore: boolean;
+
+  @Column({ default: true })
+  isActive: boolean;
+
   @Column({ type: 'numeric', default: 0 })
   quantity: number;
 }

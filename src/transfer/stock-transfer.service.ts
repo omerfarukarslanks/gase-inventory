@@ -89,7 +89,6 @@ export class StockTransferService {
                 fromStore: { id: fromStore.id } as any,
                 toStore: { id: toStore.id } as any,
                 status: StockTransferStatus.COMPLETED, // şimdilik tek adımda tamamlıyoruz
-                reference: dto.reference,
                 note: dto.note,
                 createdById: userId,
                 updatedById: userId,

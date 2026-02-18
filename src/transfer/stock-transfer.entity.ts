@@ -37,10 +37,6 @@ export class StockTransfer {
   })
   status: StockTransferStatus;
 
-
-  @Column({ nullable: true })
-  reference?: string;
-
   @Column({ type: 'text', nullable: true })
   note?: string | null;
 

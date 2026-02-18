@@ -1,16 +1,18 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsArray,
   IsNotEmpty,
-  IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { ProductAttributeSelectionDto } from './product-attribute-selection.dto';
+import { PriceFieldsDto } from 'src/common/dto/price-fields.dto';
 
-export class CreateProductDto {
+export class CreateProductDto extends PriceFieldsDto {
   @ApiProperty({ example: 'Basic T-Shirt' })
   @IsString()
   @IsNotEmpty()
@@ -32,26 +34,6 @@ export class CreateProductDto {
   image?: string;
   // additionalImages?: string[];
 
-  @ApiPropertyOptional({ example: 'TRY', default: 'TRY' })
-  @IsString()
-  @IsOptional()
-  defaultCurrency?: string;
-
-  @ApiPropertyOptional({ example: 299.9, description: 'Varsayılan satış fiyatı' })
-  @IsNumber()
-  @IsOptional()
-  defaultSalePrice?: number;
-
-  @ApiPropertyOptional({ example: 150, description: 'Varsayılan alış fiyatı (tedarik)' })
-  @IsNumber()
-  @IsOptional()
-  defaultPurchasePrice?: number;
-
-  @ApiPropertyOptional({ example: 20, description: 'Varsayılan vergi yüzdesi (KDV)' })
-  @IsNumber()
-  @IsOptional()
-  defaultTaxPercent?: number;
-
   @ApiPropertyOptional({
     type: [ProductAttributeSelectionDto],
     description: 'Product create sirasinda varyant olusturmak icin attribute secimleri',
@@ -61,4 +43,22 @@ export class CreateProductDto {
   @ValidateNested({ each: true })
   @Type(() => ProductAttributeSelectionDto)
   attributes?: ProductAttributeSelectionDto[];
+
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Urunun eklenecegi magaza id listesi',
+    example: ['08443723-dd00-49d2-969b-c27e579178dc'],
+  })
+  @IsOptional()
+  @IsArray()
+  @IsUUID('4', { each: true })
+  storeIds?: string[];
+
+  @ApiPropertyOptional({
+    description: 'Urun tum magazalara eklensin mi?',
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean()
+  applyToAllStores?: boolean;
 }

@@ -176,6 +176,8 @@ export class InventoryService {
         tenant: { id: tenantId } as Tenant,
         store: { id: storeId } as Store,
         productVariant: { id: variantId } as ProductVariant,
+        isActiveStore: true,
+        isActive: true,
         quantity,
         createdById: userId,
         updatedById: userId,
@@ -239,6 +241,10 @@ export class InventoryService {
   ): Promise<InventoryMovement> {
     return this.runInTransaction(manager, async (txManager) => {
       const userId = this.getUserIdOrThrow();
+      const movementMeta = {
+        ...(params.meta ?? {}),
+        ...(params.reference ? { reference: params.reference } : {}),
+      };
 
       const repo = this.getMovementRepo(txManager);
 
@@ -248,8 +254,7 @@ export class InventoryService {
         productVariant: { id: params.variant.id } as any,
         type: params.type,
         quantity: params.quantity,
-        reference: params.reference,
-        meta: params.meta,
+        meta: Object.keys(movementMeta).length > 0 ? movementMeta : undefined,
 
         currency: params.currency,
         unitPrice: params.unitPrice,
@@ -681,6 +686,7 @@ export class InventoryService {
       .addSelect('spp."lineTotal"', 'lineTotal')
       .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
       .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s."isActiveStore" = true')
       .andWhere('s.storeId = :storeId', { storeId })
       .orderBy('product.name', 'ASC')
       .addOrderBy('variant.name', 'ASC')
@@ -842,7 +848,8 @@ export class InventoryService {
       .addSelect('spp."taxAmount"', 'taxAmount')
       .addSelect('spp."lineTotal"', 'lineTotal')
       .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
-      .where('s.tenantId = :tenantId', { tenantId });
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s."isActiveStore" = true');
 
     if (requestedStoreIds.length) {
       qb.andWhere('s.storeId IN (:...storeIds)', { storeIds: requestedStoreIds });
@@ -1047,6 +1054,7 @@ export class InventoryService {
       .addSelect('store.name', 'storeName')
       .addSelect('s.quantity', 'quantity')
       .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s."isActiveStore" = true')
       .andWhere('s.productVariantId = :variantId', { variantId: productVariantId })
       .orderBy('store.name', 'ASC')
       .getRawMany<{ storeId: string; storeName: string; quantity: string }>();
@@ -1225,6 +1233,7 @@ export class InventoryService {
       .innerJoinAndSelect('s.store', 'store')
       .innerJoinAndSelect('s.productVariant', 'variant')
       .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s."isActiveStore" = true')
       .andWhere('s.quantity <= :threshold', { threshold: query.threshold })
       .orderBy('s.quantity', 'ASC');
 

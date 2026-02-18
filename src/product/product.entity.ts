@@ -1,13 +1,10 @@
 import { Tenant } from 'src/tenant/tenant.entity';
 import {
   Column,
-  CreateDateColumn,
   Entity,
   OneToMany,
   ManyToOne,
-  PrimaryGeneratedColumn,
   Unique,
-  UpdateDateColumn,
 } from 'typeorm';
 import { ProductVariant } from './product-variant.entity';
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
@@ -30,9 +27,6 @@ export class Product extends AuditableEntity {
   description?: string;
 
   @Column({ nullable: true })
-  defaultBarcode?: string; // varyant kullanmayan ürünler için
-
-  @Column({ nullable: true })
   image?: string;
 
   // 🔹 Fiyat alanları
@@ -47,6 +41,18 @@ export class Product extends AuditableEntity {
 
   @Column({ type: 'numeric', nullable: true })
   defaultTaxPercent?: number; // ör: 20 => %20 KDV
+
+  @Column({ type: 'numeric', nullable: true })
+  defaultDiscountPercent?: number;
+
+  @Column({ type: 'numeric', nullable: true })
+  defaultDiscountAmount?: number;
+
+  @Column({ type: 'numeric', nullable: true })
+  defaultTaxAmount?: number;
+
+  @Column({ type: 'numeric', nullable: true })
+  defaultLineTotal?: number;
 
   /* @Column({ nullable: true })
   additionalImages?: string[]; */

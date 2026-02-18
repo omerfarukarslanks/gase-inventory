@@ -48,9 +48,6 @@ export class InventoryMovement extends AuditableEntity {
   @Column({ type: 'numeric' })
   quantity: number;
 
-  @Column({ nullable: true })
-  reference?: string;
-
   @Column({ type: 'jsonb', nullable: true })
   meta?: Record<string, any>;
 

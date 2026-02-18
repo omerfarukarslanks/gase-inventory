@@ -14,11 +14,6 @@ export class UpdateVariantDto {
   @IsOptional()
   code?: string;
 
-  @ApiPropertyOptional({ example: '8691234567999' })
-  @IsString()
-  @IsOptional()
-  barcode?: string;
-
   @ApiPropertyOptional({
     example: { color: 'Red', size: 'XL' },
     description: 'Serbest biçimli attribute bilgileri (renk, beden vb.)',

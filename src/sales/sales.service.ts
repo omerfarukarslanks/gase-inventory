@@ -431,7 +431,6 @@ export class SalesService {
           'productVariant.id',
           'productVariant.name',
           'productVariant.code',
-          'productVariant.barcode',
         ]);
     }
 

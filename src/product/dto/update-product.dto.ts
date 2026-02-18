@@ -1,11 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsArray, IsBoolean, IsNotEmpty, IsOptional, IsString, IsUUID } from 'class-validator';
+import { PriceFieldsDto } from 'src/common/dto/price-fields.dto';
 
-export class UpdateProductDto {
+export class UpdateProductDto extends PriceFieldsDto {
   @ApiPropertyOptional({ example: 'Basic T-Shirt v2' })
   @IsString()
   @IsNotEmpty()
-  name: string;
+  @IsOptional()
+  name?: string;
 
   @ApiPropertyOptional({ example: 'TSHIRT-BASIC' })
   @IsString()
@@ -28,23 +30,21 @@ export class UpdateProductDto {
   image?: string;
   // additionalImages?: string[];
 
-  @ApiPropertyOptional({ example: 'TRY', default: 'TRY' })
-  @IsString()
+  @ApiPropertyOptional({
+    type: [String],
+    description: 'Urunun aktif olacagi magaza id listesi',
+    example: ['08443723-dd00-49d2-969b-c27e579178dc'],
+  })
   @IsOptional()
-  defaultCurrency?: string;
+  @IsArray()
+  @IsUUID('4', { each: true })
+  storeIds?: string[];
 
-  @ApiPropertyOptional({ example: 299.9, description: 'Varsayılan satış fiyatı' })
-  @IsNumber()
+  @ApiPropertyOptional({
+    description: 'Urun tum magazalarda aktif olsun mu?',
+    example: true,
+  })
   @IsOptional()
-  defaultSalePrice?: number;
-
-  @ApiPropertyOptional({ example: 150, description: 'Varsayılan alış fiyatı (tedarik)' })
-  @IsNumber()
-  @IsOptional()
-  defaultPurchasePrice?: number;
-
-  @ApiPropertyOptional({ example: 20, description: 'Varsayılan vergi yüzdesi (KDV)' })
-  @IsNumber()
-  @IsOptional()
-  defaultTaxPercent?: number;
+  @IsBoolean()
+  applyToAllStores?: boolean;
 }

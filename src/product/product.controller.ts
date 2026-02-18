@@ -51,7 +51,10 @@ export class ProductController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Belirli bir urunu guncelle' })
+  @ApiOperation({
+    summary:
+      'Belirli bir urunu guncelle (token storeId varsa isActive store bazli uygulanir)',
+  })
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductDto,
@@ -60,7 +63,10 @@ export class ProductController {
   }
 
   @Delete(':id')
-  @ApiOperation({ summary: 'Belirli bir urunu pasife al (soft delete)' })
+  @ApiOperation({
+    summary:
+      'Belirli bir urunu pasife al (token storeId varsa yalnizca o store, yoksa tum tenant/storelar)',
+  })
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);
   }
@@ -95,7 +101,10 @@ export class ProductController {
   }
 
   @Patch(':id/variants/:variantId')
-  @ApiOperation({ summary: 'Urun varyantini guncelle' })
+  @ApiOperation({
+    summary:
+      'Urun varyantini guncelle (isActive store bazli yonetilir: token storeId varsa sadece o store, yoksa tum storelar)',
+  })
   updateVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,
@@ -105,7 +114,10 @@ export class ProductController {
   }
 
   @Delete(':id/variants/:variantId')
-  @ApiOperation({ summary: 'Urun varyantini pasife al (soft delete)' })
+  @ApiOperation({
+    summary:
+      'Urun varyantini pasife al (token storeId varsa sadece o store, yoksa tum storelar)',
+  })
   removeVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,

@@ -9,7 +9,6 @@ import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
 
 @Entity({ name: 'product_variants' })
 @Unique(['product', 'code'])
-@Unique(['barcode'])
 export class ProductVariant extends AuditableEntity {
   @ManyToOne(() => Product, (product) => product.variants, {
     onDelete: 'CASCADE',
@@ -21,9 +20,6 @@ export class ProductVariant extends AuditableEntity {
 
   @Column()
   code: string; // varyant kodu (RENK-BEDEN vs.)
-
-  @Column({ nullable: true })
-  barcode?: string;
 
   // İleride: renk, beden vb. attribute'leri buraya jsonb ile taşıyabiliriz
   @Column({ type: 'jsonb', nullable: true })
@@ -42,6 +38,18 @@ export class ProductVariant extends AuditableEntity {
 
   @Column('numeric', { precision: 5, scale: 2, nullable: true })
   defaultTaxPercent?: number | null;
+
+  @Column('numeric', { precision: 5, scale: 2, nullable: true })
+  defaultDiscountPercent?: number | null;
+
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  defaultDiscountAmount?: number | null;
+
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  defaultTaxAmount?: number | null;
+
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  defaultLineTotal?: number | null;
 
   @Column({ default: true })
   isActive: boolean;

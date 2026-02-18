@@ -26,6 +26,7 @@ import { slugify } from 'src/common/utils/slugify';
 import { Store } from 'src/store/store.entity';
 import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 import { StoreErrors } from 'src/common/errors/store.errors';
+import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 
 type ResolvedAttributeGroup = {
   attributeId: string;
@@ -33,17 +34,28 @@ type ResolvedAttributeGroup = {
   values: { valueId: string; valueName: string }[];
 };
 
+type PriceInput = {
+  currency?: string;
+  purchasePrice?: number;
+  unitPrice?: number;
+  discountPercent?: number;
+  discountAmount?: number;
+  taxPercent?: number;
+  taxAmount?: number;
+  lineTotal?: number;
+};
+
 type ProductVariantListItem = {
   id: string;
   name: string;
   code: string;
-  barcode?: string;
   attributes?: Record<string, any>;
   createdAt: Date;
   updatedAt: Date;
   createdById?: string;
   updatedById?: string;
   isActive: boolean;
+  purchasePrice: number | null;
   unitPrice: number | null;
   currency: string;
   discountPercent: number | null;
@@ -51,6 +63,19 @@ type ProductVariantListItem = {
   taxPercent: number | null;
   taxAmount: number | null;
   lineTotal: number | null;
+};
+
+type ProductResponseShape = Product & {
+  storeIds?: string[];
+  applyToAllStores?: boolean;
+  currency?: string;
+  purchasePrice?: number | null;
+  unitPrice?: number | null;
+  discountPercent?: number | null;
+  discountAmount?: number | null;
+  taxPercent?: number | null;
+  taxAmount?: number | null;
+  lineTotal?: number | null;
 };
 
 @Injectable()
@@ -68,6 +93,8 @@ export class ProductService {
     private readonly storeRepo: Repository<Store>,
     @InjectRepository(StoreVariantStock)
     private readonly storeVariantStockRepo: Repository<StoreVariantStock>,
+    @InjectRepository(StoreProductPrice)
+    private readonly storeProductPriceRepo: Repository<StoreProductPrice>,
     private readonly appContext: AppContextService,
     private readonly dataSource: DataSource,
   ) {}
@@ -98,6 +125,12 @@ export class ProductService {
       : this.storeVariantStockRepo;
   }
 
+  private getStoreProductPriceRepo(manager?: EntityManager): Repository<StoreProductPrice> {
+    return manager
+      ? manager.getRepository(StoreProductPrice)
+      : this.storeProductPriceRepo;
+  }
+
   private async getTenantStoreOrThrow(
     storeId: string | undefined,
     manager?: EntityManager,
@@ -122,16 +155,217 @@ export class ProductService {
     return store;
   }
 
+  private toBoolean(value: unknown): boolean {
+    return value === true || value === 'true' || value === 't' || value === 1 || value === '1';
+  }
+
+  private async getTenantStoreIds(
+    manager?: EntityManager,
+    onlyActive = false,
+  ): Promise<string[]> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const stores = await this.getStoreRepo(manager).find({
+      where: {
+        tenant: { id: tenantId },
+        ...(onlyActive ? { isActive: true } : {}),
+      },
+      select: { id: true },
+    });
+
+    return stores.map((store) => store.id);
+  }
+
+  private async ensureTenantStoreIds(
+    storeIds: string[],
+    manager?: EntityManager,
+  ): Promise<string[]> {
+    if (storeIds.length === 0) {
+      return [];
+    }
+
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const normalized = Array.from(
+      new Set(storeIds.map((id) => id?.trim()).filter((id): id is string => Boolean(id))),
+    );
+    if (normalized.length === 0) {
+      return [];
+    }
+
+    const stores = await this.getStoreRepo(manager).find({
+      where: {
+        id: In(normalized),
+        tenant: { id: tenantId },
+      },
+      select: { id: true },
+    });
+
+    if (stores.length !== normalized.length) {
+      throw new NotFoundException(StoreErrors.STORE_NOT_IN_TENANT);
+    }
+
+    return normalized;
+  }
+
+  private async resolveScopeStoreIds(
+    storeIds: string[] | undefined,
+    applyToAllStores: boolean | undefined,
+    manager?: EntityManager,
+  ): Promise<string[]> {
+    const tokenStoreId = this.appContext.getStoreId();
+
+    if (applyToAllStores === true) {
+      return this.getTenantStoreIds(manager);
+    }
+
+    const normalizedStoreIds = await this.ensureTenantStoreIds(storeIds ?? [], manager);
+    if (normalizedStoreIds.length > 0) {
+      return normalizedStoreIds;
+    }
+
+    if (applyToAllStores === false) {
+      if (tokenStoreId) {
+        const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+        return [store.id];
+      }
+      throw new BadRequestException(
+        'storeIds bos ise applyToAllStores=false durumunda token icinde storeId olmalidir.',
+      );
+    }
+
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      return [store.id];
+    }
+
+    return this.getTenantStoreIds(manager);
+  }
+
+  private getCreateProductPriceDefaults(input: PriceInput): Partial<Product> {
+    return {
+      defaultCurrency: input.currency ?? 'TRY',
+      defaultPurchasePrice: input.purchasePrice,
+      defaultSalePrice: input.unitPrice,
+      defaultDiscountPercent: input.discountPercent,
+      defaultDiscountAmount: input.discountAmount,
+      defaultTaxPercent: input.taxPercent,
+      defaultTaxAmount: input.taxAmount,
+      defaultLineTotal: input.lineTotal,
+    };
+  }
+
+  private getUpdateProductPriceDefaults(input: PriceInput): Partial<Product> {
+    const mapped: Partial<Product> = {};
+
+    if (input.currency !== undefined) mapped.defaultCurrency = input.currency;
+    if (input.purchasePrice !== undefined) mapped.defaultPurchasePrice = input.purchasePrice;
+    if (input.unitPrice !== undefined) mapped.defaultSalePrice = input.unitPrice;
+    if (input.discountPercent !== undefined) mapped.defaultDiscountPercent = input.discountPercent;
+    if (input.discountAmount !== undefined) mapped.defaultDiscountAmount = input.discountAmount;
+    if (input.taxPercent !== undefined) mapped.defaultTaxPercent = input.taxPercent;
+    if (input.taxAmount !== undefined) mapped.defaultTaxAmount = input.taxAmount;
+    if (input.lineTotal !== undefined) mapped.defaultLineTotal = input.lineTotal;
+
+    return mapped;
+  }
+
+  private async attachProductScopeAndPriceFields(
+    products: Product[],
+    manager?: EntityManager,
+  ): Promise<void> {
+    if (products.length === 0) {
+      return;
+    }
+
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const productIds = products.map((product) => product.id);
+    const totalStoreCount = await this.getStoreRepo(manager).count({
+      where: { tenant: { id: tenantId } },
+    });
+
+    const rows = await this.getVariantRepo(manager)
+      .createQueryBuilder('variant')
+      .innerJoin('variant.product', 'product')
+      .innerJoin(
+        StoreVariantStock,
+        'svs',
+        'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+        { tenantId },
+      )
+      .select('product.id', 'productId')
+      .addSelect('svs."storeId"', 'storeId')
+      .where('product.id IN (:...productIds)', { productIds })
+      .groupBy('product.id')
+      .addGroupBy('svs."storeId"')
+      .getRawMany<{
+        productId: string;
+        storeId: string;
+      }>();
+
+    const storeIdsByProductId = new Map<string, Set<string>>();
+    for (const row of rows) {
+      if (!storeIdsByProductId.has(row.productId)) {
+        storeIdsByProductId.set(row.productId, new Set<string>());
+      }
+      storeIdsByProductId.get(row.productId)!.add(row.storeId);
+    }
+
+    for (const product of products) {
+      const typedProduct = product as ProductResponseShape;
+      const storeIds = Array.from(storeIdsByProductId.get(product.id) ?? []);
+      typedProduct.storeIds = storeIds;
+      typedProduct.applyToAllStores =
+        totalStoreCount > 0 && storeIds.length === totalStoreCount;
+
+      typedProduct.currency = product.defaultCurrency ?? 'TRY';
+      typedProduct.purchasePrice =
+        product.defaultPurchasePrice != null ? Number(product.defaultPurchasePrice) : null;
+      typedProduct.unitPrice =
+        product.defaultSalePrice != null ? Number(product.defaultSalePrice) : null;
+      typedProduct.discountPercent =
+        product.defaultDiscountPercent != null ? Number(product.defaultDiscountPercent) : null;
+      typedProduct.discountAmount =
+        product.defaultDiscountAmount != null ? Number(product.defaultDiscountAmount) : null;
+      typedProduct.taxPercent =
+        product.defaultTaxPercent != null ? Number(product.defaultTaxPercent) : null;
+      typedProduct.taxAmount =
+        product.defaultTaxAmount != null ? Number(product.defaultTaxAmount) : null;
+      typedProduct.lineTotal =
+        product.defaultLineTotal != null ? Number(product.defaultLineTotal) : null;
+    }
+  }
+
   async createProduct(dto: CreateProductDto, manager?: EntityManager): Promise<Product> {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
-    const { attributes, ...productPayload } = dto;
+    const {
+      attributes,
+      storeIds,
+      applyToAllStores,
+      currency,
+      purchasePrice,
+      unitPrice,
+      discountPercent,
+      discountAmount,
+      taxPercent,
+      taxAmount,
+      lineTotal,
+      ...productPayload
+    } = dto;
 
     const product = repo.create({
       ...productPayload,
+      ...this.getCreateProductPriceDefaults({
+        currency,
+        purchasePrice,
+        unitPrice,
+        discountPercent,
+        discountAmount,
+        taxPercent,
+        taxAmount,
+        lineTotal,
+      }),
       tenant: { id: tenantId } as any,
-      defaultCurrency: dto.defaultCurrency ?? 'TRY',
       createdById: userId,
       updatedById: userId,
     });
@@ -140,6 +374,13 @@ export class ProductService {
     if (Array.isArray(attributes) && attributes.length > 0) {
       await this.syncGeneratedVariants(saved, attributes, manager);
     }
+
+    await this.applyProductStoresScope(
+      saved.id,
+      storeIds,
+      applyToAllStores,
+      manager,
+    );
 
     return saved;
   }
@@ -151,6 +392,9 @@ export class ProductService {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
     const tokenStoreId = this.appContext.getStoreId();
+    const tokenStore = tokenStoreId
+      ? await this.getTenantStoreOrThrow(tokenStoreId, manager)
+      : null;
     const {
       page,
       limit,
@@ -194,7 +438,11 @@ export class ProductService {
         'product.defaultCurrency',
         'product.defaultSalePrice',
         'product.defaultPurchasePrice',
+        'product.defaultDiscountPercent',
+        'product.defaultDiscountAmount',
         'product.defaultTaxPercent',
+        'product.defaultTaxAmount',
+        'product.defaultLineTotal',
         'product.isActive',
         'product.createdAt',
         'product.updatedAt',
@@ -242,8 +490,55 @@ export class ProductService {
       });
     }
 
+    if (tokenStore) {
+      qb.andWhere(
+        `EXISTS (
+          SELECT 1
+          FROM product_variants pv
+          INNER JOIN store_variant_stock svs ON svs."productVariantId" = pv.id
+          WHERE pv."productId" = product.id
+            AND svs."tenantId" = :tenantId
+            AND svs."storeId" = :scopeStoreId
+            AND svs."isActiveStore" = true
+        )`,
+        { scopeStoreId: tokenStore.id },
+      );
+    }
+
+    const scopeStoreFilter = tokenStore ? 'AND svs."storeId" = :scopeStoreId' : '';
+    const scopeStoreLinkFilter = 'AND svs."isActiveStore" = true';
+    const scopeParams = tokenStore ? { scopeStoreId: tokenStore.id } : {};
+
     if (isActive !== undefined && isActive !== 'all') {
-      qb.andWhere('product.isActive = :isActive', { isActive });
+      if (isActive === true) {
+        qb.andWhere(
+          `EXISTS (
+            SELECT 1
+            FROM product_variants pv
+            INNER JOIN store_variant_stock svs ON svs."productVariantId" = pv.id
+            WHERE pv."productId" = product.id
+              AND svs."tenantId" = :tenantId
+              ${scopeStoreFilter}
+              ${scopeStoreLinkFilter}
+              AND svs."isActive" = true
+          )`,
+          scopeParams,
+        );
+      } else {
+        qb.andWhere(
+          `NOT EXISTS (
+            SELECT 1
+            FROM product_variants pv
+            INNER JOIN store_variant_stock svs ON svs."productVariantId" = pv.id
+            WHERE pv."productId" = product.id
+              AND svs."tenantId" = :tenantId
+              ${scopeStoreFilter}
+              ${scopeStoreLinkFilter}
+              AND svs."isActive" = true
+          )`,
+          scopeParams,
+        );
+      }
     }
 
     if (variantIsActive !== undefined && variantIsActive !== 'all') {
@@ -251,31 +546,69 @@ export class ProductService {
         `EXISTS (
           SELECT 1
           FROM product_variants pv
-          WHERE pv."productId" = product.id
-            AND pv."isActive" = :variantIsActive
-        )`,
-        { variantIsActive },
-      );
-    }
-
-    if (tokenStoreId) {
-      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
-      qb.andWhere(
-        `EXISTS (
-          SELECT 1
-          FROM product_variants pv
           INNER JOIN store_variant_stock svs ON svs."productVariantId" = pv.id
           WHERE pv."productId" = product.id
-            AND svs."storeId" = :storeId
             AND svs."tenantId" = :tenantId
+            ${scopeStoreFilter}
+            ${scopeStoreLinkFilter}
+            AND svs."isActive" = :variantIsActive
         )`,
-        { storeId: store.id, tenantId },
+        {
+          ...scopeParams,
+          variantIsActive,
+        },
       );
     }
 
     const countQb = qb.clone();
     const total = await countQb.getCount();
     const products = await qb.getMany();
+
+    if (products.length > 0) {
+      const productIds = products.map((product) => product.id);
+      const activeStateQb = this.getVariantRepo(manager)
+        .createQueryBuilder('variant')
+        .innerJoin('variant.product', 'product')
+        .innerJoin(
+          StoreVariantStock,
+          'svs',
+          'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+          { tenantId },
+        )
+        .select('product.id', 'productId')
+        .addSelect(
+          'MAX(CASE WHEN svs."isActive" = true THEN 1 ELSE 0 END)',
+          'hasActiveStoreRow',
+        )
+        .where('product.id IN (:...productIds)', { productIds });
+
+      if (tokenStore) {
+        activeStateQb.andWhere('svs."storeId" = :scopeStoreId', {
+          scopeStoreId: tokenStore.id,
+        });
+      }
+
+      const activeStateRows = await activeStateQb
+        .groupBy('product.id')
+        .getRawMany<{
+          productId: string;
+          hasActiveStoreRow: string;
+        }>();
+
+      const hasActiveStoreRowByProductId = new Map(
+        activeStateRows.map((row) => [
+          row.productId,
+          Number(row.hasActiveStoreRow ?? 0) > 0,
+        ]),
+      );
+
+      for (const product of products) {
+        const hasActiveStoreRow = hasActiveStoreRowByProductId.get(product.id) ?? false;
+        product.isActive = hasActiveStoreRow;
+      }
+    }
+
+    await this.attachProductScopeAndPriceFields(products, manager);
 
     return {
       data: products,
@@ -291,6 +624,7 @@ export class ProductService {
   async findOne(id: string, manager?: EntityManager): Promise<Product> {
     const repo = this.getProductRepo(manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
 
     const product = await repo
       .createQueryBuilder('product')
@@ -303,7 +637,11 @@ export class ProductService {
         'product.defaultCurrency',
         'product.defaultSalePrice',
         'product.defaultPurchasePrice',
+        'product.defaultDiscountPercent',
+        'product.defaultDiscountAmount',
         'product.defaultTaxPercent',
+        'product.defaultTaxAmount',
+        'product.defaultLineTotal',
         'product.isActive',
         'product.createdAt',
         'product.updatedAt',
@@ -318,28 +656,144 @@ export class ProductService {
       throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
     }
 
+    let scopeStoreIdForProduct: string | null = null;
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      scopeStoreIdForProduct = store.id;
+
+      const scopedExists = await this.getVariantRepo(manager)
+        .createQueryBuilder('variant')
+        .innerJoin(
+          StoreVariantStock,
+          'svs',
+          'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+          { tenantId },
+        )
+        .select('1')
+        .where('variant."productId" = :productId', { productId: product.id })
+        .andWhere('svs."storeId" = :storeId', { storeId: store.id })
+        .limit(1)
+        .getRawOne();
+
+      if (!scopedExists) {
+        throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
+      }
+    }
+
+    const activeQb = this.getVariantRepo(manager)
+      .createQueryBuilder('variant')
+      .innerJoin(
+        StoreVariantStock,
+        'svs',
+        'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+        { tenantId },
+      )
+      .select(
+        'MAX(CASE WHEN svs."isActive" = true THEN 1 ELSE 0 END)',
+        'hasActiveStoreRow',
+      )
+      .where('variant."productId" = :productId', { productId: product.id });
+
+    if (scopeStoreIdForProduct) {
+      activeQb.andWhere('svs."storeId" = :storeId', {
+        storeId: scopeStoreIdForProduct,
+      });
+    }
+
+    const activeRow = await activeQb.getRawOne<{ hasActiveStoreRow: string | null }>();
+    product.isActive = Number(activeRow?.hasActiveStoreRow ?? 0) > 0;
+    await this.attachProductScopeAndPriceFields([product], manager);
+
     return product;
   }
 
   async update(id: string, dto: UpdateProductDto, manager?: EntityManager): Promise<Product> {
     const repo = this.getProductRepo(manager);
     const product = await this.findOne(id, manager);
-    const userId = this.appContext.getUserIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
+    const {
+      isActive: nextIsActive,
+      storeIds,
+      applyToAllStores,
+      currency,
+      purchasePrice,
+      unitPrice,
+      discountPercent,
+      discountAmount,
+      taxPercent,
+      taxAmount,
+      lineTotal,
+      ...restDto
+    } = dto;
+    let hasStoreStateChange = false;
 
-    Object.assign(product, dto, {
+    if (nextIsActive !== undefined) {
+      if (tokenStoreId) {
+        const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+        await this.setStoreProductActiveState(product.id, store.id, nextIsActive, manager);
+      } else {
+        await this.setTenantProductStoresActiveState(product.id, nextIsActive, manager);
+      }
+      hasStoreStateChange = true;
+    }
+
+    if (storeIds !== undefined || applyToAllStores !== undefined) {
+      await this.applyProductStoresScope(
+        product.id,
+        storeIds,
+        applyToAllStores,
+        manager,
+      );
+      hasStoreStateChange = true;
+    }
+
+    if (Object.keys(restDto).length === 0) {
+      const hasPriceUpdate =
+        currency !== undefined ||
+        purchasePrice !== undefined ||
+        unitPrice !== undefined ||
+        discountPercent !== undefined ||
+        discountAmount !== undefined ||
+        taxPercent !== undefined ||
+        taxAmount !== undefined ||
+        lineTotal !== undefined;
+      if (!hasPriceUpdate) {
+        return hasStoreStateChange ? this.findOne(id, manager) : product;
+      }
+    }
+
+    const userId = this.appContext.getUserIdOrThrow();
+    Object.assign(
+      product,
+      restDto,
+      this.getUpdateProductPriceDefaults({
+        currency,
+        purchasePrice,
+        unitPrice,
+        discountPercent,
+        discountAmount,
+        taxPercent,
+        taxAmount,
+        lineTotal,
+      }),
+      {
       updatedById: userId,
-    });
+      },
+    );
     return repo.save(product);
   }
 
   async remove(id: string, manager?: EntityManager): Promise<void> {
-    const repo = this.getProductRepo(manager);
-    const product = await this.findOne(id, manager);
-    const userId = this.appContext.getUserIdOrThrow();
+    await this.findOne(id, manager);
+    const tokenStoreId = this.appContext.getStoreId();
 
-    product.isActive = false;
-    product.updatedById = userId;
-    await repo.save(product);
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      await this.setStoreProductActiveState(id, store.id, false, manager);
+      return;
+    }
+
+    await this.setTenantProductStoresActiveState(id, false, manager);
   }
 
   // ---------- Variant işlemleri ----------
@@ -378,7 +832,6 @@ export class ProductService {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const tokenStoreId = this.appContext.getStoreId();
     const isActive = query?.isActive ?? 'all';
-    let variants: ProductVariant[];
 
     if (tokenStoreId) {
       const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
@@ -389,91 +842,209 @@ export class ProductService {
         .innerJoin(
           StoreVariantStock,
           'svs',
-          'svs."productVariantId" = variant.id AND svs."storeId" = :storeId AND svs."tenantId" = :tenantId',
+          'svs."productVariantId" = variant.id AND svs."storeId" = :storeId AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
           {
             storeId: store.id,
             tenantId,
           },
         )
-        .select([
-          'variant.id',
-          'variant.name',
-          'variant.code',
-          'variant.barcode',
-          'variant.attributes',
-          'variant.defaultSalePrice',
-          'variant.defaultCurrency',
-          'variant.defaultTaxPercent',
-          'variant.createdAt',
-          'variant.updatedAt',
-          'variant.createdById',
-          'variant.updatedById',
-          'variant.isActive',
-        ])
+        .leftJoin(
+          StoreProductPrice,
+          'spp',
+          [
+            'spp."tenantId" = :tenantId',
+            'spp."storeId" = :storeId',
+            'spp."productVariantId" = variant.id',
+            'spp."isActive" = true',
+          ].join(' AND '),
+          {
+            tenantId,
+            storeId: store.id,
+          },
+        )
+        .select('variant.id', 'id')
+        .addSelect('variant.name', 'name')
+        .addSelect('variant.code', 'code')
+        .addSelect('variant.attributes', 'attributes')
+        .addSelect(
+          'COALESCE(spp."purchasePrice", variant."defaultPurchasePrice")',
+          'purchasePrice',
+        )
+        .addSelect(
+          'COALESCE(spp."salePrice", variant."defaultSalePrice")',
+          'unitPrice',
+        )
+        .addSelect(
+          'COALESCE(spp."currency", variant."defaultCurrency", \'TRY\')',
+          'currency',
+        )
+        .addSelect(
+          'COALESCE(spp."discountPercent", variant."defaultDiscountPercent")',
+          'discountPercent',
+        )
+        .addSelect(
+          'COALESCE(spp."discountAmount", variant."defaultDiscountAmount")',
+          'discountAmount',
+        )
+        .addSelect(
+          'COALESCE(spp."taxPercent", variant."defaultTaxPercent")',
+          'taxPercent',
+        )
+        .addSelect(
+          'COALESCE(spp."taxAmount", variant."defaultTaxAmount")',
+          'taxAmount',
+        )
+        .addSelect(
+          'COALESCE(spp."lineTotal", variant."defaultLineTotal")',
+          'lineTotal',
+        )
+        .addSelect('variant."createdAt"', 'createdAt')
+        .addSelect('variant."updatedAt"', 'updatedAt')
+        .addSelect('variant."createdById"', 'createdById')
+        .addSelect('variant."updatedById"', 'updatedById')
+        .addSelect('svs."isActive"', 'storeIsActive')
         .where('product.id = :productId', { productId: product.id })
         .andWhere('product.tenantId = :tenantId', { tenantId })
-        .orderBy('variant.isActive', 'DESC')
+        .orderBy('svs."isActive"', 'DESC')
         .addOrderBy('variant."createdAt"', 'DESC');
 
       if (isActive !== 'all') {
-        qb.andWhere('variant.isActive = :isActive', { isActive });
+        qb.andWhere('svs."isActive" = :isActive', { isActive });
       }
 
-      variants = await qb.getMany();
-    } else {
-      const where: any = {
-        product: { id: product.id },
-      };
+      const rows = await qb.getRawMany<{
+        id: string;
+        name: string;
+        code: string;
+        attributes: Record<string, any> | null;
+        purchasePrice: string | null;
+        unitPrice: string | null;
+        currency: string | null;
+        discountPercent: string | null;
+        discountAmount: string | null;
+        taxPercent: string | null;
+        taxAmount: string | null;
+        lineTotal: string | null;
+        createdAt: Date | string;
+        updatedAt: Date | string;
+        createdById: string | null;
+        updatedById: string | null;
+        storeIsActive: boolean | string | null;
+      }>();
 
-      if (isActive !== 'all') {
-        where.isActive = isActive;
-      }
-
-      variants = await repo.find({
-        select: {
-          id: true,
-          name: true,
-          code: true,
-          barcode: true,
-          attributes: true,
-          defaultSalePrice: true,
-          defaultCurrency: true,
-          defaultTaxPercent: true,
-          createdAt: true,
-          updatedAt: true,
-          createdById: true,
-          updatedById: true,
-          isActive: true,
-        },
-        where,
-        order: { isActive: 'DESC', createdAt: 'DESC' },
-      });
+      return rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        code: row.code,
+        attributes: row.attributes ?? undefined,
+        createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt),
+        updatedAt: row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt),
+        createdById: row.createdById ?? undefined,
+        updatedById: row.updatedById ?? undefined,
+        isActive: this.toBoolean(row.storeIsActive),
+        purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
+        unitPrice: row.unitPrice !== null ? Number(row.unitPrice) : null,
+        currency: row.currency ?? 'TRY',
+        discountPercent: row.discountPercent !== null ? Number(row.discountPercent) : null,
+        discountAmount: row.discountAmount !== null ? Number(row.discountAmount) : null,
+        taxPercent: row.taxPercent !== null ? Number(row.taxPercent) : null,
+        taxAmount: row.taxAmount !== null ? Number(row.taxAmount) : null,
+        lineTotal: row.lineTotal !== null ? Number(row.lineTotal) : null,
+      }));
     }
 
-    return variants.map((variant) => ({
-      id: variant.id,
-      name: variant.name,
-      code: variant.code,
-      barcode: variant.barcode,
-      attributes: variant.attributes,
-      createdAt: variant.createdAt,
-      updatedAt: variant.updatedAt,
-      createdById: variant.createdById,
-      updatedById: variant.updatedById,
-      isActive: variant.isActive,
-      unitPrice:
-        variant.defaultSalePrice != null
-          ? Number(variant.defaultSalePrice)
-          : null,
-      currency: variant.defaultCurrency ?? 'TRY',
-      discountPercent: null,
-      discountAmount: null,
-      taxPercent:
-        variant.defaultTaxPercent != null
-          ? Number(variant.defaultTaxPercent)
-          : null,
-      taxAmount: null,
-      lineTotal: null,
+    const activeExpr = 'COALESCE(MAX(CASE WHEN svs."isActive" = true THEN 1 ELSE 0 END), 0)';
+    const qb = repo
+      .createQueryBuilder('variant')
+      .innerJoin('variant.product', 'product')
+      .leftJoin(
+        StoreVariantStock,
+        'svs',
+        'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+        { tenantId },
+      )
+      .where('product.id = :productId', { productId: product.id })
+      .andWhere('product.tenantId = :tenantId', { tenantId })
+      .select('variant.id', 'id')
+      .addSelect('variant.name', 'name')
+      .addSelect('variant.code', 'code')
+      .addSelect('variant.attributes', 'attributes')
+      .addSelect('variant."defaultPurchasePrice"', 'defaultPurchasePrice')
+      .addSelect('variant."defaultSalePrice"', 'defaultSalePrice')
+      .addSelect('variant."defaultCurrency"', 'defaultCurrency')
+      .addSelect('variant."defaultDiscountPercent"', 'defaultDiscountPercent')
+      .addSelect('variant."defaultDiscountAmount"', 'defaultDiscountAmount')
+      .addSelect('variant."defaultTaxPercent"', 'defaultTaxPercent')
+      .addSelect('variant."defaultTaxAmount"', 'defaultTaxAmount')
+      .addSelect('variant."defaultLineTotal"', 'defaultLineTotal')
+      .addSelect('variant."createdAt"', 'createdAt')
+      .addSelect('variant."updatedAt"', 'updatedAt')
+      .addSelect('variant."createdById"', 'createdById')
+      .addSelect('variant."updatedById"', 'updatedById')
+      .addSelect(activeExpr, 'hasActiveStoreRow')
+      .groupBy('variant.id')
+      .addGroupBy('variant.name')
+      .addGroupBy('variant.code')
+      .addGroupBy('variant.attributes')
+      .addGroupBy('variant."defaultPurchasePrice"')
+      .addGroupBy('variant."defaultSalePrice"')
+      .addGroupBy('variant."defaultCurrency"')
+      .addGroupBy('variant."defaultDiscountPercent"')
+      .addGroupBy('variant."defaultDiscountAmount"')
+      .addGroupBy('variant."defaultTaxPercent"')
+      .addGroupBy('variant."defaultTaxAmount"')
+      .addGroupBy('variant."defaultLineTotal"')
+      .addGroupBy('variant."createdAt"')
+      .addGroupBy('variant."updatedAt"')
+      .addGroupBy('variant."createdById"')
+      .addGroupBy('variant."updatedById"')
+      .orderBy(activeExpr, 'DESC')
+      .addOrderBy('variant."createdAt"', 'DESC');
+
+    if (isActive !== 'all') {
+      qb.having(`${activeExpr} = :activeFlag`, { activeFlag: isActive ? 1 : 0 });
+    }
+
+    const rows = await qb.getRawMany<{
+      id: string;
+      name: string;
+      code: string;
+      attributes: Record<string, any> | null;
+      defaultPurchasePrice: string | null;
+      defaultSalePrice: string | null;
+      defaultCurrency: string | null;
+      defaultDiscountPercent: string | null;
+      defaultDiscountAmount: string | null;
+      defaultTaxPercent: string | null;
+      defaultTaxAmount: string | null;
+      defaultLineTotal: string | null;
+      createdAt: Date | string;
+      updatedAt: Date | string;
+      createdById: string | null;
+      updatedById: string | null;
+      hasActiveStoreRow: string;
+    }>();
+
+    return rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      code: row.code,
+      attributes: row.attributes ?? undefined,
+      createdAt: row.createdAt instanceof Date ? row.createdAt : new Date(row.createdAt),
+      updatedAt: row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt),
+      createdById: row.createdById ?? undefined,
+      updatedById: row.updatedById ?? undefined,
+      isActive: Number(row.hasActiveStoreRow ?? 0) > 0,
+      purchasePrice: row.defaultPurchasePrice !== null ? Number(row.defaultPurchasePrice) : null,
+      unitPrice: row.defaultSalePrice !== null ? Number(row.defaultSalePrice) : null,
+      currency: row.defaultCurrency ?? 'TRY',
+      discountPercent:
+        row.defaultDiscountPercent !== null ? Number(row.defaultDiscountPercent) : null,
+      discountAmount:
+        row.defaultDiscountAmount !== null ? Number(row.defaultDiscountAmount) : null,
+      taxPercent: row.defaultTaxPercent !== null ? Number(row.defaultTaxPercent) : null,
+      taxAmount: row.defaultTaxAmount !== null ? Number(row.defaultTaxAmount) : null,
+      lineTotal: row.defaultLineTotal !== null ? Number(row.defaultLineTotal) : null,
     }));
   }
 
@@ -495,18 +1066,30 @@ export class ProductService {
     const repo = this.getVariantRepo(manager);
     const product = await this.findOne(productId, manager);
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
 
-    const variants = await repo.find({
-      select: {
-        id: true,
-        attributes: true,
-        isActive: true,
-      },
-      where: {
-        product: { id: product.id },
-        isActive: true,
-      },
-    });
+    const qb = repo
+      .createQueryBuilder('variant')
+      .innerJoin('variant.product', 'product')
+      .innerJoin(
+        StoreVariantStock,
+        'svs',
+        'svs."productVariantId" = variant.id AND svs."tenantId" = :tenantId AND svs."isActiveStore" = true',
+        { tenantId },
+      )
+      .select([
+        'variant.id',
+        'variant.attributes',
+      ])
+      .where('product.id = :productId', { productId: product.id })
+      .andWhere('svs."isActive" = true');
+
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      qb.andWhere('svs."storeId" = :storeId', { storeId: store.id });
+    }
+
+    const variants = await qb.getMany();
 
     const valueMap = new Map<string, Set<string>>();
 
@@ -601,10 +1184,28 @@ export class ProductService {
     manager?: EntityManager,
   ): Promise<ProductVariant> {
     const repo = this.getVariantRepo(manager);
-    const userId = this.appContext.getUserIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
+    const {
+      isActive: nextIsActive,
+      ...restDto
+    } = dto;
     const variant = await this.findVariantByProductOrThrow(productId, variantId, manager);
 
-    Object.assign(variant, dto, {
+    if (nextIsActive !== undefined) {
+      if (tokenStoreId) {
+        const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+        await this.setStoreVariantActiveState(variant.id, store.id, nextIsActive, manager);
+      } else {
+        await this.setTenantVariantStoresActiveState(variant.id, nextIsActive, manager);
+      }
+    }
+
+    if (Object.keys(restDto).length === 0) {
+      return variant;
+    }
+
+    const userId = this.appContext.getUserIdOrThrow();
+    Object.assign(variant, restDto, {
       updatedById: userId,
     });
 
@@ -616,13 +1217,16 @@ export class ProductService {
     variantId: string,
     manager?: EntityManager,
   ): Promise<void> {
-    const repo = this.getVariantRepo(manager);
-    const userId = this.appContext.getUserIdOrThrow();
+    const tokenStoreId = this.appContext.getStoreId();
     const variant = await this.findVariantByProductOrThrow(productId, variantId, manager);
 
-    variant.isActive = false;
-    variant.updatedById = userId;
-    await repo.save(variant);
+    if (tokenStoreId) {
+      const store = await this.getTenantStoreOrThrow(tokenStoreId, manager);
+      await this.setStoreVariantActiveState(variant.id, store.id, false, manager);
+      return;
+    }
+
+    await this.setTenantVariantStoresActiveState(variant.id, false, manager);
   }
 
   private async findVariantByProductOrThrow(
@@ -674,6 +1278,14 @@ export class ProductService {
 
     const assignedVariantIds = new Set<string>();
     const reservedCodes = new Set(existingVariants.map((v) => v.code));
+    const storeActiveMap = await this.buildStoreActiveMapForVariants(
+      existingVariants.map((variant) => variant.id),
+      manager,
+    );
+    const storeLinkMap = await this.buildStoreLinkMapForVariants(
+      existingVariants.map((variant) => variant.id),
+      manager,
+    );
 
     for (const combination of combinations) {
       const desiredName = combination.values
@@ -701,7 +1313,11 @@ export class ProductService {
       target.defaultCurrency = product.defaultCurrency;
       target.defaultSalePrice = product.defaultSalePrice ?? null;
       target.defaultPurchasePrice = product.defaultPurchasePrice ?? null;
+      target.defaultDiscountPercent = product.defaultDiscountPercent ?? null;
+      target.defaultDiscountAmount = product.defaultDiscountAmount ?? null;
       target.defaultTaxPercent = product.defaultTaxPercent ?? null;
+      target.defaultTaxAmount = product.defaultTaxAmount ?? null;
+      target.defaultLineTotal = product.defaultLineTotal ?? null;
       if (isNewVariant) {
         target.isActive = true;
       }
@@ -719,19 +1335,19 @@ export class ProductService {
 
       const saved = await variantRepo.save(target);
       assignedVariantIds.add(saved.id);
-      await this.ensureVariantStockRowsPerStore(saved.id, manager);
+      await this.ensureVariantStockRowsPerStore(
+        saved.id,
+        manager,
+        storeActiveMap,
+        storeLinkMap,
+      );
     }
 
     for (const variant of existingVariants) {
       if (assignedVariantIds.has(variant.id)) {
         continue;
       }
-      if (!variant.isActive) {
-        continue;
-      }
-      variant.isActive = false;
-      variant.updatedById = userId;
-      await variantRepo.save(variant);
+      await this.setTenantVariantStoresActiveState(variant.id, false, manager);
     }
   }
 
@@ -896,47 +1512,118 @@ export class ProductService {
     return candidate;
   }
 
-  private async ensureVariantStockRowsPerStore(
-    variantId: string,
+  private async getVariantIdsByProductId(
+    productId: string,
     manager?: EntityManager,
+  ): Promise<string[]> {
+    const variantRows = await this.getVariantRepo(manager).find({
+      select: {
+        id: true,
+      },
+      where: {
+        product: { id: productId },
+      },
+    });
+
+    return variantRows.map((variant) => variant.id);
+  }
+
+  private async buildStoreActiveMapForVariants(
+    variantIds: string[],
+    manager?: EntityManager,
+  ): Promise<Map<string, boolean>> {
+    if (variantIds.length === 0) {
+      return new Map();
+    }
+
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const rows = await this.getStoreVariantStockRepo(manager)
+      .createQueryBuilder('s')
+      .select('s."storeId"', 'storeId')
+      .addSelect(
+        'MAX(CASE WHEN s."isActive" = true THEN 1 ELSE 0 END)',
+        'hasActive',
+      )
+      .where('s."tenantId" = :tenantId', { tenantId })
+      .andWhere('s."isActiveStore" = true')
+      .andWhere('s."productVariantId" IN (:...variantIds)', { variantIds })
+      .groupBy('s."storeId"')
+      .getRawMany<{
+        storeId: string;
+        hasActive: string;
+      }>();
+
+    return new Map(
+      rows.map((row) => [row.storeId, Number(row.hasActive ?? 0) > 0]),
+    );
+  }
+
+  private async buildStoreLinkMapForVariants(
+    variantIds: string[],
+    manager?: EntityManager,
+  ): Promise<Map<string, boolean>> {
+    if (variantIds.length === 0) {
+      return new Map();
+    }
+
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const rows = await this.getStoreVariantStockRepo(manager)
+      .createQueryBuilder('s')
+      .select('s."storeId"', 'storeId')
+      .addSelect(
+        'MAX(CASE WHEN s."isActiveStore" = true THEN 1 ELSE 0 END)',
+        'hasLink',
+      )
+      .where('s."tenantId" = :tenantId', { tenantId })
+      .andWhere('s."productVariantId" IN (:...variantIds)', { variantIds })
+      .groupBy('s."storeId"')
+      .getRawMany<{
+        storeId: string;
+        hasLink: string;
+      }>();
+
+    return new Map(
+      rows.map((row) => [row.storeId, Number(row.hasLink ?? 0) > 0]),
+    );
+  }
+
+  private async ensureVariantStockRowsForStoreIds(
+    variantId: string,
+    storeIds: string[],
+    manager?: EntityManager,
+    storeActiveMap?: Map<string, boolean>,
+    storeLinkMap?: Map<string, boolean>,
   ): Promise<void> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
-    const storeRepo = this.getStoreRepo(manager);
     const stockRepo = this.getStoreVariantStockRepo(manager);
+    const uniqueStoreIds = Array.from(new Set(storeIds));
 
-    const stores = await storeRepo.find({
-      where: {
-        tenant: { id: tenantId },
-        isActive: true,
-      },
-      select: { id: true },
-    });
-
-    if (stores.length === 0) {
+    if (uniqueStoreIds.length === 0) {
       return;
     }
 
-    const storeIds = stores.map((store) => store.id);
     const existingRows = await stockRepo.find({
       where: {
         tenant: { id: tenantId },
         productVariant: { id: variantId },
-        store: { id: In(storeIds) },
+        store: { id: In(uniqueStoreIds) },
       },
       relations: ['store'],
     });
 
     const existingStoreIds = new Set(existingRows.map((row) => row.store.id));
-    for (const store of stores) {
-      if (existingStoreIds.has(store.id)) {
+    for (const storeId of uniqueStoreIds) {
+      if (existingStoreIds.has(storeId)) {
         continue;
       }
 
       const row = stockRepo.create({
         tenant: { id: tenantId } as any,
-        store: { id: store.id } as any,
+        store: { id: storeId } as any,
         productVariant: { id: variantId } as any,
+        isActiveStore: storeLinkMap?.get(storeId) ?? true,
+        isActive: storeActiveMap?.get(storeId) ?? true,
         quantity: 0,
         createdById: userId,
         updatedById: userId,
@@ -944,5 +1631,310 @@ export class ProductService {
 
       await stockRepo.save(row);
     }
+
+    await this.ensureStoreProductPriceRowsForStoreIds(
+      variantId,
+      uniqueStoreIds,
+      manager,
+      storeLinkMap,
+    );
+  }
+
+  private async ensureStoreProductPriceRowsForStoreIds(
+    variantId: string,
+    storeIds: string[],
+    manager?: EntityManager,
+    storeLinkMap?: Map<string, boolean>,
+  ): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const sppRepo = this.getStoreProductPriceRepo(manager);
+    const uniqueStoreIds = Array.from(new Set(storeIds));
+
+    if (uniqueStoreIds.length === 0) {
+      return;
+    }
+
+    const variant = await this.getVariantRepo(manager).findOne({
+      where: {
+        id: variantId,
+        product: { tenant: { id: tenantId } },
+      },
+      select: {
+        id: true,
+        defaultCurrency: true,
+        defaultSalePrice: true,
+        defaultPurchasePrice: true,
+        defaultDiscountPercent: true,
+        defaultDiscountAmount: true,
+        defaultTaxPercent: true,
+        defaultTaxAmount: true,
+        defaultLineTotal: true,
+      },
+    });
+
+    if (!variant) {
+      throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
+    }
+
+    const existingRows = await sppRepo.find({
+      where: {
+        tenant: { id: tenantId },
+        productVariant: { id: variantId },
+        store: { id: In(uniqueStoreIds) },
+      },
+      relations: ['store'],
+    });
+
+    const existingStoreIds = new Set(existingRows.map((row) => row.store.id));
+    for (const storeId of uniqueStoreIds) {
+      if (existingStoreIds.has(storeId)) {
+        continue;
+      }
+
+      const row = sppRepo.create({
+        tenant: { id: tenantId } as any,
+        store: { id: storeId } as any,
+        productVariant: { id: variantId } as any,
+        unitPrice: variant.defaultSalePrice ?? null,
+        purchasePrice: variant.defaultPurchasePrice ?? null,
+        currency: variant.defaultCurrency ?? 'TRY',
+        discountPercent: variant.defaultDiscountPercent ?? null,
+        discountAmount: variant.defaultDiscountAmount ?? null,
+        taxPercent: variant.defaultTaxPercent ?? null,
+        taxAmount: variant.defaultTaxAmount ?? null,
+        lineTotal: variant.defaultLineTotal ?? null,
+        isActive: storeLinkMap?.get(storeId) ?? true,
+        createdById: userId,
+        updatedById: userId,
+      });
+
+      await sppRepo.save(row);
+    }
+  }
+
+  private async setStoreVariantActiveState(
+    variantId: string,
+    storeId: string,
+    isActive: boolean,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const stockRepo = this.getStoreVariantStockRepo(manager);
+
+    await this.ensureVariantStockRowsForStoreIds(variantId, [storeId], manager);
+
+    await stockRepo
+      .createQueryBuilder()
+      .update(StoreVariantStock)
+      .set({
+        isActive,
+        isActiveStore: true,
+        updatedById: userId,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('"storeId" = :storeId', { storeId })
+      .andWhere('"productVariantId" = :variantId', { variantId })
+      .execute();
+  }
+
+  private async setTenantVariantStoresActiveState(
+    variantId: string,
+    isActive: boolean,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const stockRepo = this.getStoreVariantStockRepo(manager);
+
+    await this.ensureVariantStockRowsPerStore(variantId, manager);
+
+    await stockRepo
+      .createQueryBuilder()
+      .update(StoreVariantStock)
+      .set({
+        isActive,
+        updatedById: userId,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('"isActiveStore" = true')
+      .andWhere('"productVariantId" = :variantId', { variantId })
+      .execute();
+  }
+
+  private async setStoreProductActiveState(
+    productId: string,
+    storeId: string,
+    isActive: boolean,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const stockRepo = this.getStoreVariantStockRepo(manager);
+    const variantIds = await this.getVariantIdsByProductId(productId, manager);
+
+    if (variantIds.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      variantIds.map((variantId) =>
+        this.ensureVariantStockRowsForStoreIds(variantId, [storeId], manager),
+      ),
+    );
+
+    await stockRepo
+      .createQueryBuilder()
+      .update(StoreVariantStock)
+      .set({
+        isActive,
+        isActiveStore: true,
+        updatedById: userId,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('"storeId" = :storeId', { storeId })
+      .andWhere('"productVariantId" IN (:...variantIds)', { variantIds })
+      .execute();
+  }
+
+  private async setTenantProductStoresActiveState(
+    productId: string,
+    isActive: boolean,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const stockRepo = this.getStoreVariantStockRepo(manager);
+    const variantIds = await this.getVariantIdsByProductId(productId, manager);
+
+    if (variantIds.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      variantIds.map((variantId) => this.ensureVariantStockRowsPerStore(variantId, manager)),
+    );
+
+    await stockRepo
+      .createQueryBuilder()
+      .update(StoreVariantStock)
+      .set({
+        isActive,
+        updatedById: userId,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('"isActiveStore" = true')
+      .andWhere('"productVariantId" IN (:...variantIds)', { variantIds })
+      .execute();
+  }
+
+  private async applyProductStoresScope(
+    productId: string,
+    storeIds: string[] | undefined,
+    applyToAllStores: boolean | undefined,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+    const stockRepo = this.getStoreVariantStockRepo(manager);
+    const sppRepo = this.getStoreProductPriceRepo(manager);
+    const variantIds = await this.getVariantIdsByProductId(productId, manager);
+    if (variantIds.length === 0) {
+      return;
+    }
+
+    const allStoreIds = await this.getTenantStoreIds(manager);
+    const targetStoreIds = await this.resolveScopeStoreIds(
+      storeIds,
+      applyToAllStores,
+      manager,
+    );
+
+    await Promise.all(
+      variantIds.map((variantId) =>
+        this.ensureVariantStockRowsForStoreIds(variantId, allStoreIds, manager),
+      ),
+    );
+
+    if (targetStoreIds.length > 0) {
+      await stockRepo
+        .createQueryBuilder()
+        .update(StoreVariantStock)
+        .set({
+          isActiveStore: true,
+          updatedById: userId,
+        })
+        .where('"tenantId" = :tenantId', { tenantId })
+        .andWhere('"productVariantId" IN (:...variantIds)', { variantIds })
+        .andWhere('"storeId" IN (:...targetStoreIds)', { targetStoreIds })
+        .execute();
+
+      await sppRepo
+        .createQueryBuilder()
+        .update(StoreProductPrice)
+        .set({
+          isActive: true,
+          updatedById: userId,
+        })
+        .where('"tenantId" = :tenantId', { tenantId })
+        .andWhere('"productVariantId" IN (:...variantIds)', { variantIds })
+        .andWhere('"storeId" IN (:...targetStoreIds)', { targetStoreIds })
+        .execute();
+    }
+
+    const shouldDeactivateOtherStores =
+      applyToAllStores === false || (Array.isArray(storeIds) && storeIds.length > 0);
+    if (!shouldDeactivateOtherStores) {
+      return;
+    }
+
+    const qb = stockRepo
+      .createQueryBuilder()
+      .update(StoreVariantStock)
+      .set({
+        isActiveStore: false,
+        updatedById: userId,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('"productVariantId" IN (:...variantIds)', { variantIds });
+
+    if (targetStoreIds.length > 0) {
+      qb.andWhere('"storeId" NOT IN (:...targetStoreIds)', { targetStoreIds });
+    }
+
+    await qb.execute();
+
+    const priceQb = sppRepo
+      .createQueryBuilder()
+      .update(StoreProductPrice)
+      .set({
+        isActive: false,
+        updatedById: userId,
+      })
+      .where('"tenantId" = :tenantId', { tenantId })
+      .andWhere('"productVariantId" IN (:...variantIds)', { variantIds });
+
+    if (targetStoreIds.length > 0) {
+      priceQb.andWhere('"storeId" NOT IN (:...targetStoreIds)', { targetStoreIds });
+    }
+
+    await priceQb.execute();
+  }
+
+  private async ensureVariantStockRowsPerStore(
+    variantId: string,
+    manager?: EntityManager,
+    storeActiveMap?: Map<string, boolean>,
+    storeLinkMap?: Map<string, boolean>,
+  ): Promise<void> {
+    const storeIds = await this.getTenantStoreIds(manager);
+    await this.ensureVariantStockRowsForStoreIds(
+      variantId,
+      storeIds,
+      manager,
+      storeActiveMap,
+      storeLinkMap,
+    );
   }
 }
