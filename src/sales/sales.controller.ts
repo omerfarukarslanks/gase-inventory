@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Patch,
   Param,
   Post,
   Query,
@@ -14,6 +15,8 @@ import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decora
 import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
 import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.decorator';
 import { ListSalesForStoreQueryDto } from './dto/list-sales.dto';
+import { UpdateSaleDto } from './dto/update-sale.dto';
+import { CancelSaleDto } from './dto/cancel-sale.dto';
 
 @ApiTags('Sales')
 @ApiBearerAuth('access-token') // DocumentBuilder içindeki key
@@ -34,6 +37,12 @@ export class SalesController {
     return this.salesService.findOne(id);
   }
 
+  @Patch(':id')
+  @ApiOperation({ summary: 'Satış fişini düzenle' })
+  updateSale(@Param('id') id: string, @Body() dto: UpdateSaleDto) {
+    return this.salesService.updateSale(id, dto);
+  }
+
   @Get()
   @ApiOperation({
     summary:
@@ -45,7 +54,7 @@ export class SalesController {
 
   @Post(':id/cancel')
   @ApiOperation({ summary: 'Satış fişini iptal et ve stok iadesi yap' })
-  cancelSale(@Param('id') id: string) {
-    return this.salesService.cancelSale(id);
+  cancelSale(@Param('id') id: string, @Body() dto: CancelSaleDto) {
+    return this.salesService.cancelSale(id, dto);
   }
 }
