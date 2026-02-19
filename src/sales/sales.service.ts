@@ -256,21 +256,20 @@ export class SalesService {
       const persistedTaxAmount =
         lineDto.taxPercent != null ? null : (lineDto.taxAmount ?? null);
 
-      const line = saleLineRepo.create({
-        sale: { id: savedSale.id } as any,
-        productVariant: { id: variant.id } as any,
-        quantity: lineDto.quantity,
-        currency: lineDto.currency,
-        unitPrice: lineDto.unitPrice,
-        discountPercent: persistedDiscountPercent,
-        discountAmount: persistedDiscountAmount,
-        taxPercent: persistedTaxPercent,
-        taxAmount: persistedTaxAmount,
-        lineTotal,
-        campaignCode: lineDto.campaignCode,
-        createdById: userId,
-        updatedById: userId,
-      });
+      const line = saleLineRepo.create();
+      line.sale = { id: savedSale.id } as any;
+      line.productVariant = { id: variant.id } as any;
+      line.quantity = lineDto.quantity;
+      line.currency = lineDto.currency;
+      line.unitPrice = lineDto.unitPrice;
+      line.discountPercent = persistedDiscountPercent ?? undefined;
+      line.discountAmount = persistedDiscountAmount ?? undefined;
+      line.taxPercent = persistedTaxPercent ?? undefined;
+      line.taxAmount = persistedTaxAmount ?? undefined;
+      line.lineTotal = lineTotal;
+      line.campaignCode = lineDto.campaignCode;
+      line.createdById = userId;
+      line.updatedById = userId;
 
       const savedLine = await saleLineRepo.save(line);
       saleLines.push(savedLine);
@@ -502,21 +501,20 @@ export class SalesService {
         const persistedTaxAmount =
           workingLine.taxPercent != null ? null : (workingLine.taxAmount ?? null);
 
-        const line = saleLineRepo.create({
-          sale: { id: sale.id } as any,
-          productVariant: { id: variant.id } as any,
-          quantity: workingLine.quantity,
-          currency: lineCurrency,
-          unitPrice: workingLine.unitPrice,
-          discountPercent: persistedDiscountPercent,
-          discountAmount: persistedDiscountAmount,
-          taxPercent: persistedTaxPercent,
-          taxAmount: persistedTaxAmount,
-          lineTotal,
-          campaignCode: workingLine.campaignCode,
-          createdById: userId,
-          updatedById: userId,
-        });
+        const line = saleLineRepo.create();
+        line.sale = { id: sale.id } as any;
+        line.productVariant = { id: variant.id } as any;
+        line.quantity = workingLine.quantity;
+        line.currency = lineCurrency;
+        line.unitPrice = workingLine.unitPrice;
+        line.discountPercent = persistedDiscountPercent ?? undefined;
+        line.discountAmount = persistedDiscountAmount ?? undefined;
+        line.taxPercent = persistedTaxPercent ?? undefined;
+        line.taxAmount = persistedTaxAmount ?? undefined;
+        line.lineTotal = lineTotal;
+        line.campaignCode = workingLine.campaignCode;
+        line.createdById = userId;
+        line.updatedById = userId;
 
         const savedLine = await saleLineRepo.save(line);
         saleCurrencies.add(lineCurrency);
