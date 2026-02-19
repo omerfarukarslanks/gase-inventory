@@ -231,6 +231,32 @@ export class ReportsService {
     return date.toISOString().slice(0, 10);
   }
 
+  private normalizeDayKey(value: unknown): string | null {
+    if (value == null) {
+      return null;
+    }
+
+    if (value instanceof Date) {
+      return this.formatUtcDay(this.getStartOfUtcDay(value));
+    }
+
+    const raw = String(value).trim();
+    if (!raw) {
+      return null;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return raw;
+    }
+
+    const parsed = new Date(raw);
+    if (!isNaN(parsed.getTime())) {
+      return this.formatUtcDay(this.getStartOfUtcDay(parsed));
+    }
+
+    return raw.slice(0, 10);
+  }
+
   private buildUtcDayList(start: Date, end: Date): string[] {
     const days: string[] = [];
     let cursor = this.getStartOfUtcDay(start);
@@ -283,7 +309,8 @@ export class ReportsService {
       return null;
     }
 
-    return ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+    const rawPercent = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+    return Math.round(rawPercent);
   }
 
   // ---- Yeni report endpointleri (scope kuralli) ----
@@ -355,7 +382,11 @@ export class ReportsService {
 
     const movementByDay = new Map<string, number>();
     for (const row of movementDailyRows) {
-      movementByDay.set(row.day, this.toNumber(row.quantity));
+      const dayKey = this.normalizeDayKey(row.day);
+      if (!dayKey) {
+        continue;
+      }
+      movementByDay.set(dayKey, this.toNumber(row.quantity));
     }
 
     const effectiveEndForDaily = range.end > todayEnd ? todayEnd : range.end;
@@ -575,17 +606,18 @@ export class ReportsService {
 
     const dailyMap = new Map<string, { orderCount: number; totalLinePrice: number }>();
     for (const row of dailyRows) {
-      dailyMap.set(row.day, {
+      const dayKey = this.normalizeDayKey(row.day);
+      if (!dayKey) {
+        continue;
+      }
+      dailyMap.set(dayKey, {
         orderCount: this.toNumber(row.orderCount),
         totalLinePrice: this.toNumber(row.totalLinePrice),
       });
     }
 
-    const effectiveDailyEnd = range.end > todayEnd ? todayEnd : range.end;
     const dailyKeys =
-      effectiveDailyEnd >= range.start
-        ? this.buildUtcDayList(range.start, effectiveDailyEnd)
-        : [];
+      range.end >= range.start ? this.buildUtcDayList(range.start, range.end) : [];
     const daily = dailyKeys.map((day) => ({
       date: day,
       orderCount: dailyMap.get(day)?.orderCount ?? 0,
