@@ -4,15 +4,25 @@
     {
       "type": "node",
       "request": "launch",
-      "name": "Debug NestJS (direct)",
-      "program": "${workspaceFolder}/node_modules/@nestjs/cli/bin/nest.js",
-      "args": ["start", "--watch", "--debug", "8080"],
+      "name": "Debug NestJS (start:debug)",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start:debug"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "console": "integratedTerminal",
       "restart": true,
       "autoAttachChildProcesses": true,
       "sourceMaps": true,
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
+      "skipFiles": ["<node_internals>/**"]
+    },
+    {
+      "type": "node",
+      "request": "attach",
+      "name": "Attach NestJS (9229)",
+      "port": 9229,
+      "restart": true,
+      "cwd": "${workspaceFolder}",
       "skipFiles": ["<node_internals>/**"]
     }
   ]

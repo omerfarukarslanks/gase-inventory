@@ -49,7 +49,7 @@ export class PaginationQueryDto {
   })
   @IsEnum(SortOrder)
   @IsOptional()
-  sortOrder: SortOrder = SortOrder.DESC;
+  sortOrder?: SortOrder = SortOrder.DESC;
 
   @ApiPropertyOptional({
     description: 'Sıralama alanı (default: createdAt)',
@@ -58,7 +58,7 @@ export class PaginationQueryDto {
   })
   @IsString()
   @IsOptional()
-  sortBy: string = 'createdAt';
+  sortBy?: string = 'createdAt';
 
   get skip(): number {
     return (this.page - 1) * this.limit;

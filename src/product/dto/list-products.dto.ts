@@ -24,7 +24,7 @@ export class ListProductsDto extends PaginationQueryDto {
   })
   @IsEnum(ListProductsSortBy)
   @IsOptional()
-  sortBy: string = ListProductsSortBy.CREATED_AT;
+  sortBy?: string = ListProductsSortBy.CREATED_AT;
 
   @ApiPropertyOptional({
     description: 'Ürün para birimi filtresi (örn: TRY, USD)',

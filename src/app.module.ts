@@ -21,6 +21,7 @@ import { StockTransferModule } from './transfer/stock-transfer.module';
 import { join } from 'path';
 import { PriceModule } from './pricing/price.module';
 import { AttributeModule } from './attribute/attribute.module';
+import { AiModule } from './ai/ai.module';
 
 @Module({
   imports: [
@@ -88,6 +89,7 @@ import { AttributeModule } from './attribute/attribute.module';
     StockTransferModule,
     PriceModule,
     AttributeModule,
+    AiModule
   ],
   controllers: [AppController],
   providers: [

@@ -16,7 +16,9 @@ import { AppContextService } from 'src/common/context/app-context.service';
 import { ProductErrors } from 'src/common/errors/product.errors';
 import {
   ListProductsDto,
+  ListProductsSortBy,
   PaginatedProductsResponse,
+  SortOrder,
 } from './dto/list-products.dto';
 import { ListVariantsDto } from './dto/list-variants.dto';
 import { Attribute } from 'src/attribute/entity/attribute.entity';
@@ -411,6 +413,23 @@ export class ProductService {
       variantIsActive,
     } = query;
 
+    const allowedSortBy = new Set<string>([
+      ListProductsSortBy.ID,
+      ListProductsSortBy.NAME,
+      ListProductsSortBy.SKU,
+      ListProductsSortBy.CREATED_AT,
+      ListProductsSortBy.UPDATED_AT,
+    ]);
+
+    const sortByValue = typeof sortBy === 'string' ? sortBy : '';
+    const safeSortBy = allowedSortBy.has(sortByValue)
+      ? sortByValue
+      : ListProductsSortBy.CREATED_AT;
+    const safeSortOrder =
+      sortOrder === SortOrder.ASC || sortOrder === SortOrder.DESC
+        ? sortOrder
+        : SortOrder.DESC;
+
     if (
       defaultSalePriceMin !== undefined &&
       defaultSalePriceMax !== undefined &&
@@ -448,7 +467,7 @@ export class ProductService {
         'product.updatedAt',
       ])
       .where('product.tenantId = :tenantId', { tenantId })
-      .orderBy(`product.${sortBy}`, sortOrder)
+      .orderBy(`product.${safeSortBy}`, safeSortOrder)
       .skip(skip)
       .take(limit)
       .loadRelationCountAndMap('product.variantCount', 'product.variants');
