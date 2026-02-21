@@ -1,4 +1,4 @@
-import {
+﻿import {
   Injectable,
   NotFoundException,
   ServiceUnavailableException,
@@ -11,6 +11,75 @@ import { toolSystemPrompt } from './ai.prompts';
 import { ToolCall, ToolName, ToolResult } from './tools/tool.type';
 import { Readable } from 'stream';
 
+const TOOL_NAMES = new Set<ToolName>([
+  'search_products',
+  'get_product_stock',
+  'sales_summary',
+  'store_performance',
+  'stock_summary',
+  'low_stock_alerts',
+  'total_stock_quantity_report',
+  'confirmed_orders_total_report',
+  'returned_orders_total_report',
+  'sales_by_product_report',
+  'inventory_movements_summary',
+  'sales_cancellations',
+  'profit_margin_report',
+  'revenue_trend_report',
+  'tax_summary_report',
+  'cogs_movement_report',
+  'vat_summary_report',
+  'audit_trail_report',
+  'discount_summary_report',
+  'employee_sales_performance_report',
+  'employee_hourly_performance_report',
+  'hourly_sales_report',
+  'seasonality_report',
+  'week_comparison_report',
+  'product_performance_ranking_report',
+  'dead_stock_report',
+  'abc_analysis_report',
+  'variant_comparison_report',
+  'top_customers_report',
+  'customer_purchase_history_report',
+  'customer_frequency_report',
+  'discount_effectiveness_report',
+  'store_price_comparison_report',
+  'sales_by_discount_band_report',
+  'stock_turnover_report',
+  'stock_aging_report',
+  'reorder_analysis_report',
+  'transfer_analysis_report',
+  'transfer_balance_recommendation_report',
+]);
+
+const DATE_RANGE_AWARE_TOOLS = new Set<ToolName>([
+  'confirmed_orders_total_report',
+  'returned_orders_total_report',
+  'sales_summary',
+  'store_performance',
+  'sales_by_product_report',
+  'sales_cancellations',
+]);
+
+const TOOL_ALIASES: Record<string, ToolName> = {
+  store_stock_report: 'stock_summary',
+  order_analysis_report: 'sales_summary',
+};
+
+const NUMBER_WORDS: Record<string, number> = {
+  bir: 1,
+  iki: 2,
+  uc: 3,
+  dort: 4,
+  bes: 5,
+  alti: 6,
+  yedi: 7,
+  sekiz: 8,
+  dokuz: 9,
+  on: 10,
+};
+
 @Injectable()
 export class AiService {
   constructor(
@@ -19,11 +88,11 @@ export class AiService {
   ) {}
 
   private get baseUrl() {
-    return process.env.OLLAMA_BASE_URL ?? 'http://localhost:11434';
+    return process.env.OLLAMA_BASE_URL ?? 'http://192.168.1.103:11434';
   }
 
   private get model() {
-    return process.env.OLLAMA_MODEL ?? 'llama3.2:3b';
+    return process.env.OLLAMA_MODEL ?? 'qwen2.5:7b';
   }
 
   private get requestTimeoutMs(): number {
@@ -37,7 +106,7 @@ export class AiService {
   private get numCtx(): number {
     const raw = Number(process.env.OLLAMA_NUM_CTX);
     if (!Number.isFinite(raw) || raw <= 0) {
-      return 2048;
+      return 4096;
     }
     return Math.trunc(raw);
   }
@@ -207,48 +276,20 @@ export class AiService {
     return null;
   }
 
-  private getToolNames(): Set<ToolName> {
-    return new Set<ToolName>([
-      'search_products',
-      'get_product_stock',
-      'sales_summary',
-      'store_performance',
-      'stock_summary',
-      'low_stock_alerts',
-      'total_stock_quantity_report',
-      'confirmed_orders_total_report',
-      'returned_orders_total_report',
-      'sales_by_product_report',
-      'inventory_movements_summary',
-      'sales_cancellations',
-      'profit_margin_report',
-      'revenue_trend_report',
-      'tax_summary_report',
-      'cogs_movement_report',
-      'vat_summary_report',
-      'audit_trail_report',
-      'discount_summary_report',
-      'employee_sales_performance_report',
-      'employee_hourly_performance_report',
-      'hourly_sales_report',
-      'seasonality_report',
-      'week_comparison_report',
-      'product_performance_ranking_report',
-      'dead_stock_report',
-      'abc_analysis_report',
-      'variant_comparison_report',
-      'top_customers_report',
-      'customer_purchase_history_report',
-      'customer_frequency_report',
-      'discount_effectiveness_report',
-      'store_price_comparison_report',
-      'sales_by_discount_band_report',
-      'stock_turnover_report',
-      'stock_aging_report',
-      'reorder_analysis_report',
-      'transfer_analysis_report',
-      'transfer_balance_recommendation_report',
-    ]);
+  private normalizeRequestedToolName(rawName: string): ToolName | null {
+    const normalized = rawName.trim().toLowerCase();
+    if (!normalized) {
+      return null;
+    }
+
+    const alias = TOOL_ALIASES[normalized];
+    if (alias) {
+      return alias;
+    }
+
+    return TOOL_NAMES.has(normalized as ToolName)
+      ? (normalized as ToolName)
+      : null;
   }
 
   private tryParseToolCall(text: string): ToolCall | null {
@@ -266,15 +307,17 @@ export class AiService {
 
     try {
       const obj = JSON.parse(json);
-      const name = String(obj?.name ?? '') as ToolName;
-      if (!this.getToolNames().has(name)) {
+      const resolvedName = this.normalizeRequestedToolName(
+        String(obj?.name ?? ''),
+      );
+      if (!resolvedName) {
         return null;
       }
       const args =
         obj?.args && typeof obj.args === 'object' && !Array.isArray(obj.args)
           ? obj.args
           : {};
-      return { name, args };
+      return { name: resolvedName, args };
     } catch {
       return null;
     }
@@ -290,8 +333,225 @@ export class AiService {
     return '';
   }
 
+  private normalizeIntentText(value: string): string {
+    return value
+      .toLocaleLowerCase('tr-TR')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '');
+  }
+
+  private parseCountToken(raw: string | undefined): number | null {
+    if (!raw) {
+      return null;
+    }
+
+    const lowered = raw.trim().toLowerCase();
+    if (!lowered) {
+      return null;
+    }
+
+    const asNumber = Number(lowered);
+    if (Number.isFinite(asNumber) && asNumber > 0) {
+      return Math.trunc(asNumber);
+    }
+
+    return NUMBER_WORDS[lowered] ?? null;
+  }
+
+  private includesAny(text: string, terms: string[]): boolean {
+    return terms.some((term) => text.includes(term));
+  }
+
+  private startOfUtcDay(date: Date): Date {
+    const copy = new Date(date);
+    copy.setUTCHours(0, 0, 0, 0);
+    return copy;
+  }
+
+  private endOfUtcDay(date: Date): Date {
+    const copy = new Date(date);
+    copy.setUTCHours(23, 59, 59, 999);
+    return copy;
+  }
+
+  private addUtcDays(date: Date, days: number): Date {
+    const copy = new Date(date);
+    copy.setUTCDate(copy.getUTCDate() + days);
+    return copy;
+  }
+
+  private formatUtcDay(date: Date): string {
+    return date.toISOString().slice(0, 10);
+  }
+
+  private isIsoDayString(value: unknown): value is string {
+    return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  }
+
+  private getWeekStartUtc(date: Date): Date {
+    const day = date.getUTCDay();
+    const shiftToMonday = (day + 6) % 7;
+    return this.addUtcDays(this.startOfUtcDay(date), -shiftToMonday);
+  }
+
+  private inferDateRangeFromText(
+    text: string,
+  ): { from?: string; to?: string } | null {
+    const normalized = this.normalizeIntentText(text);
+    if (!normalized.trim()) {
+      return null;
+    }
+
+    const now = new Date();
+    const todayStart = this.startOfUtcDay(now);
+    const todayEnd = this.endOfUtcDay(now);
+
+    const toRange = (from: Date, to: Date) => ({
+      from: this.formatUtcDay(from),
+      to: this.formatUtcDay(to),
+    });
+
+    if (
+      /\b(?:bugun|bugunun|bugunku|bu\s+gun|bu\s+gunun|bugunde|bugune|today|todays)\b/.test(
+        normalized,
+      )
+    ) {
+      return toRange(todayStart, todayEnd);
+    }
+
+    if (/\b(?:dun|yesterday)\b/.test(normalized)) {
+      const yesterday = this.addUtcDays(todayStart, -1);
+      return toRange(yesterday, yesterday);
+    }
+
+    if (/\b(?:bu hafta|this week)\b/.test(normalized)) {
+      const weekStart = this.getWeekStartUtc(todayStart);
+      return toRange(weekStart, todayEnd);
+    }
+
+    const lastWeekMatch = normalized.match(
+      /\b(?:son|last)\s+(\d+|bir|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on)\s*(?:hafta|week)(?:da|lik|dir|boyunca|s)?\b/,
+    );
+    const weekCount = this.parseCountToken(lastWeekMatch?.[1]);
+    if (weekCount) {
+      const weeks = Math.max(1, weekCount);
+      const totalDays = weeks * 7;
+      const from = this.addUtcDays(todayStart, -(totalDays - 1));
+      return toRange(from, todayEnd);
+    }
+
+    if (/\b(?:son hafta|last week)\b/.test(normalized)) {
+      const from = this.addUtcDays(todayStart, -6);
+      return toRange(from, todayEnd);
+    }
+
+    const lastDayMatch = normalized.match(
+      /\b(?:son|last)\s+(\d+|bir|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on)\s*(?:gun|day)(?:de|dur|luk|boyunca|s)?\b/,
+    );
+    const dayCount = this.parseCountToken(lastDayMatch?.[1]);
+    if (dayCount) {
+      const days = Math.max(1, dayCount);
+      const from = this.addUtcDays(todayStart, -(days - 1));
+      return toRange(from, todayEnd);
+    }
+
+    if (/\b(?:bu ay|this month)\b/.test(normalized)) {
+      const monthStart = new Date(
+        Date.UTC(todayStart.getUTCFullYear(), todayStart.getUTCMonth(), 1),
+      );
+      return toRange(monthStart, todayEnd);
+    }
+
+    if (/\b(?:gecen ay|onceki ay|last month)\b/.test(normalized)) {
+      const prevMonthStart = new Date(
+        Date.UTC(todayStart.getUTCFullYear(), todayStart.getUTCMonth() - 1, 1),
+      );
+      const prevMonthEnd = new Date(
+        Date.UTC(todayStart.getUTCFullYear(), todayStart.getUTCMonth(), 0),
+      );
+      return toRange(prevMonthStart, this.endOfUtcDay(prevMonthEnd));
+    }
+
+    const lastMonthMatch = normalized.match(
+      /\b(?:son|last)\s+(\d+|bir|iki|uc|dort|bes|alti|yedi|sekiz|dokuz|on)\s*(?:ay|month)(?:da|lik|dir|boyunca|s)?\b/,
+    );
+    const monthCount = this.parseCountToken(lastMonthMatch?.[1]);
+    if (monthCount) {
+      const months = Math.max(1, monthCount);
+      const from = new Date(
+        Date.UTC(
+          todayStart.getUTCFullYear(),
+          todayStart.getUTCMonth() - months + 1,
+          1,
+        ),
+      );
+      return toRange(from, todayEnd);
+    }
+
+    if (/\b(?:bu yil|this year)\b/.test(normalized)) {
+      const yearStart = new Date(Date.UTC(todayStart.getUTCFullYear(), 0, 1));
+      return toRange(yearStart, todayEnd);
+    }
+
+    return null;
+  }
+
+  private async inferDateRangeFromTextWithModel(
+    text: string,
+  ): Promise<{ from?: string; to?: string } | null> {
+    const userText = text.trim();
+    if (!userText) {
+      return null;
+    }
+
+    const today = this.formatUtcDay(this.startOfUtcDay(new Date()));
+    const systemPrompt = [
+      'Extract a date range from the user message regardless of language.',
+      `Today is ${today}.`,
+      'Return only one JSON object.',
+      'Allowed outputs:',
+      '- {} when no date/time range is present.',
+      '- {"from":"YYYY-MM-DD","to":"YYYY-MM-DD"}',
+      'Rules:',
+      '- Resolve relative dates (today, yesterday, last week, last 7 days, this month).',
+      '- Use inclusive ranges.',
+      '- Do not include explanations or markdown.',
+    ].join('\n');
+
+    try {
+      const response = await this.chatOnceRaw(
+        [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userText },
+        ],
+        true,
+      );
+      const content = String(response?.message?.content ?? '');
+      const json = this.extractFirstJsonObject(content);
+      if (!json) {
+        return null;
+      }
+
+      const parsed = JSON.parse(json) as { from?: unknown; to?: unknown };
+      const from = this.isIsoDayString(parsed?.from) ? parsed.from : undefined;
+      const to = this.isIsoDayString(parsed?.to) ? parsed.to : undefined;
+
+      if (!from && !to) {
+        return null;
+      }
+
+      if (from && to && from > to) {
+        return { from: to, to: from };
+      }
+
+      return { from, to };
+    } catch {
+      return null;
+    }
+  }
+
   private inferThresholdFromText(text: string): number | undefined {
-    const byKeyword = text.match(/(?:esik|eşik)\s*(\d{1,3})/i);
+    const byKeyword = text.match(/(?:esik|eÅŸik)\s*(\d{1,3})/i);
     if (byKeyword?.[1]) {
       return Number(byKeyword[1]);
     }
@@ -312,8 +572,8 @@ export class AiService {
 
     const cleaned = raw.replace(/[?.!]+$/g, '').trim();
     const patterns = [
-      /^(.+?)\s+ürünün?\s+stok/i,
-      /^(.+?)\s+urun[unınin]*\s+stok/i,
+      /^(.+?)\s+Ã¼rÃ¼nÃ¼n?\s+stok/i,
+      /^(.+?)\s+urun[unÄ±nin]*\s+stok/i,
       /^(.+?)\s+stok\s+durum/i,
       /^(.+?)\s+stok/i,
     ];
@@ -333,7 +593,7 @@ export class AiService {
 
     const normalized = candidate
       .replace(
-        /\b(bana|lütfen|lutfen|göster|goster|ver|getir|durumu|durumunu|raporu)\b/gi,
+        /\b(bana|lÃ¼tfen|lutfen|gÃ¶ster|goster|ver|getir|durumu|durumunu|raporu)\b/gi,
         ' ',
       )
       .replace(/\s+/g, ' ')
@@ -348,7 +608,7 @@ export class AiService {
   ): ToolCall {
     const lastUserText = this.getLastUserMessage(userMessages).toLowerCase();
     const asksLowStock =
-      /kritik.*stok|stok.*kritik|dusuk.*stok|stok.*dusuk|düşük.*stok|stok.*düşük/i.test(
+      /kritik.*stok|stok.*kritik|dusuk.*stok|stok.*dusuk|dÃ¼ÅŸÃ¼k.*stok|stok.*dÃ¼ÅŸÃ¼k/i.test(
         lastUserText,
       );
 
@@ -369,15 +629,36 @@ export class AiService {
 
   private inferToolCallFromUserMessage(userMessages: any[]): ToolCall | null {
     const rawText = this.getLastUserMessage(userMessages);
-    const text = rawText.toLowerCase();
+    const text = this.normalizeIntentText(rawText);
     if (!rawText) {
       return null;
     }
 
+    const inferNoSaleDays = (input: string): number | undefined => {
+      const dayMatch = input.match(/\b(\d{1,4})\s*(?:gun|gundur|gunde)\b/);
+      if (dayMatch?.[1]) {
+        return Number(dayMatch[1]);
+      }
+      const monthMatch = input.match(/\b(\d{1,3})\s*(?:ay|aydir|aylik)\b/);
+      if (monthMatch?.[1]) {
+        return Number(monthMatch[1]) * 30;
+      }
+      return undefined;
+    };
+
     if (
-      /kritik.*stok|stok.*kritik|dusuk.*stok|stok.*dusuk|düşük.*stok|stok.*düşük|esik|eşik/i.test(
-        text,
-      )
+      this.includesAny(text, [
+        'kritik stok',
+        'stok seviyesi kritik',
+        'minimum stok',
+        'stok alarmi',
+        'bitmek uzere',
+        'azalan stok',
+        'stok seviyesi',
+        'depoda az kalan',
+        'dusuk stok',
+      ]) ||
+      /stok.*altinda/.test(text)
     ) {
       return {
         name: 'low_stock_alerts',
@@ -389,18 +670,48 @@ export class AiService {
       };
     }
 
-    if (/magaza.*performans|mağaza.*performans|store.*performans/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'magaza performans',
+        'magazalar nasil',
+        'store performans',
+      ])
+    ) {
       return {
         name: 'store_performance',
         args: { page: 1, limit: 10 },
       };
     }
 
-    if (/satis.*ozet|satış.*özet|ciro.*ozet|ciro.*özet/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'satis ozeti',
+        'toplam satis',
+        'toplam ciro',
+        'satis raporu',
+        'satis performansi',
+        'bugunku toplam satis',
+      ]) ||
+      /(?:bu ay|gecen ay|son \d+ gun|son \d+ hafta|bu yil).*(?:satis|ciro)/.test(
+        text,
+      )
+    ) {
       return { name: 'sales_summary', args: {} };
     }
 
-    if (/ürün.*stok|urun.*stok|stok.*ürün|stok.*urun/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'urun stok',
+        'stok miktari',
+        'stok durumu',
+        'stok bilgisi',
+        'varyant bazli stok',
+        'magaza bazli stok dagilimi',
+        'toplam kac adet kaldi',
+        'hangi magazada kac adet',
+      ]) ||
+      /\bsku[a-z0-9_-]*\b/.test(text)
+    ) {
       const inferredProduct =
         this.extractProductReferenceFromText(rawText) ?? rawText;
       return {
@@ -409,71 +720,193 @@ export class AiService {
       };
     }
 
-    if (/stok.*ozet|stok.*durum|stok.*rapor/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'tum stoklari getir',
+        'stok raporunu ver',
+        'subesindeki stok',
+        'magazasindaki stok',
+        'stok ozet',
+      ])
+    ) {
       return {
         name: 'stock_summary',
         args: { page: 1, limit: 10 },
       };
     }
 
-    if (/iade.*siparis|iptal.*siparis|iptal.*satis/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'iade',
+        'iptal edilen',
+        'iptal siparis',
+        'iptal satis',
+        'iade tutari',
+        'iptal orani',
+      ])
+    ) {
       return { name: 'returned_orders_total_report', args: {} };
     }
 
-    if (/confirmed.*siparis|onayli.*siparis|onaylı.*siparis/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'confirmed siparis',
+        'onayli siparis',
+      ])
+    ) {
       return { name: 'confirmed_orders_total_report', args: {} };
     }
 
-    if (/kar.*marj|karlılık|karlilik|profit/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'en yuksek tutarli siparis',
+        'ortalama siparis tutari',
+        'siparis basina ortalama urun',
+      ])
+    ) {
+      // order_analysis_report alias'i sales_summary'e normalize edilir.
+      return { name: 'sales_summary', args: {} };
+    }
+
+    if (
+      this.includesAny(text, [
+        'kar marj',
+        'karlilik',
+        'brut kar',
+        'net kar',
+        'profit',
+      ])
+    ) {
       return { name: 'profit_margin_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/en.*cok.*sat|en.*iyi.*urun|urun.*performans|ürün.*performans/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'en cok satan',
+        'en iyi performans',
+        'urun performans',
+        'en fazla gelir getiren',
+        'satis adedine gore',
+        'en hizli tukenen',
+      ])
+    ) {
       return { name: 'product_performance_ranking_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/olu.*stok|ölü.*stok|dead.*stock|satilmayan|satılmayan/i.test(text)) {
-      return { name: 'dead_stock_report', args: { noSaleDays: 30, page: 1, limit: 10 } };
+    if (
+      this.includesAny(text, [
+        'olu stok',
+        'dead stock',
+        'satilmayan',
+        'hareketsiz stok',
+        'depoda duran urunler',
+      ])
+    ) {
+      return {
+        name: 'dead_stock_report',
+        args: { noSaleDays: inferNoSaleDays(text) ?? 30, page: 1, limit: 10 },
+      };
     }
 
-    if (/calisan.*performans|çalışan.*performans|personel.*performans/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'calisan satis performans',
+        'en cok satis yapan personel',
+        'personel bazli ciro',
+        'calisan basina ortalama satis',
+      ])
+    ) {
       return { name: 'employee_sales_performance_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/en.*iyi.*musteri|müşteri.*siralama|müşteri.*sıralama|top.*musteri/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'en iyi musteri',
+        'en cok alisveris yapan musteri',
+        'toplam harcamasi en yuksek musteri',
+        'en aktif musteri',
+        'top musteri',
+      ])
+    ) {
       return { name: 'top_customers_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/gelir.*trend|trend|revenue.*trend/i.test(text)) {
-      return { name: 'revenue_trend_report', args: { groupBy: 'day' } };
+    if (
+      this.includesAny(text, [
+        'gelir trend',
+        'revenue trend',
+        'gelir grafigi',
+        'ciro dagilimi',
+        'satis trendi',
+        'gelir karsilastirmasi',
+      ])
+    ) {
+      let groupBy: 'day' | 'week' | 'month' = 'day';
+      if (this.includesAny(text, ['haftalik', 'weekly', 'week'])) {
+        groupBy = 'week';
+      } else if (
+        this.includesAny(text, ['aylik', 'monthly', 'month', 'yillik', 'yearly', 'year'])
+      ) {
+        groupBy = 'month';
+      }
+
+      return { name: 'revenue_trend_report', args: { groupBy } };
     }
 
-    if (/abc.*analiz|pareto/i.test(text)) {
+    if (this.includesAny(text, ['abc analiz', 'pareto'])) {
       return { name: 'abc_analysis_report', args: {} };
     }
 
-    if (/stok.*devir|turnover/i.test(text)) {
+    if (this.includesAny(text, ['stok devir', 'turnover'])) {
       return { name: 'stock_turnover_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/transfer.*denge|transfer.*oneri|dengesizlik/i.test(text)) {
+    if (
+      this.includesAny(text, ['transfer denge', 'transfer oneri', 'dengesizlik'])
+    ) {
       return { name: 'transfer_balance_recommendation_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/transfer.*analiz|magaza.*transfer|mağaza.*transfer/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'transfer analiz',
+        'magaza transfer',
+        'magazalar arasi transfer',
+        'en cok transfer',
+        'transfer hacmi',
+      ])
+    ) {
       return { name: 'transfer_analysis_report', args: { page: 1, limit: 10 } };
     }
 
-    if (/indirim.*etkisi|kampanya.*etkisi|kampanya.*analiz/i.test(text)) {
+    if (
+      this.includesAny(text, [
+        'indirim etkisi',
+        'kampanya etkisi',
+        'kampanya analiz',
+      ])
+    ) {
       return { name: 'discount_effectiveness_report', args: {} };
     }
 
-    if (/kdv|vat|vergi.*ozet/i.test(text)) {
+    if (this.includesAny(text, ['kdv', 'vat', 'vergi ozet'])) {
       return { name: 'vat_summary_report', args: {} };
     }
 
-    if (/denetim|audit/i.test(text)) {
+    if (this.includesAny(text, ['denetim', 'audit'])) {
       return { name: 'audit_trail_report', args: { page: 1, limit: 20 } };
+    }
+
+    if (
+      this.includesAny(text, [
+        'saatlik satis dagilimi',
+        'en yogun satis saati',
+        'gunlere gore satis yogunlugu',
+        'hafta ici',
+        'hafta sonu',
+      ])
+    ) {
+      return { name: 'hourly_sales_report', args: {} };
     }
 
     return null;
@@ -531,6 +964,44 @@ export class AiService {
         __userQuery: lastUserText,
       },
     };
+  }
+
+  private async ensureDateRangeArgs(
+    call: ToolCall,
+    userMessages: any[],
+  ): Promise<ToolCall> {
+    if (!DATE_RANGE_AWARE_TOOLS.has(call.name)) {
+      return call;
+    }
+
+    const args = { ...(call.args ?? {}) } as Record<string, any>;
+    const hasExplicitDate = [args.from, args.to, args.startDate, args.endDate].some(
+      (value) => typeof value === 'string' && value.trim().length > 0,
+    );
+    if (hasExplicitDate) {
+      return { ...call, args };
+    }
+
+    const inferredLocal = this.inferDateRangeFromText(
+      this.getLastUserMessage(userMessages),
+    );
+    const inferred =
+      inferredLocal ??
+      (await this.inferDateRangeFromTextWithModel(
+        this.getLastUserMessage(userMessages),
+      ));
+    if (!inferred) {
+      return { ...call, args };
+    }
+
+    if (inferred.from) {
+      args.from = inferred.from;
+    }
+    if (inferred.to) {
+      args.to = inferred.to;
+    }
+
+    return { ...call, args };
   }
 
   private toNumber(value: unknown, fallback = 0): number {
@@ -606,7 +1077,57 @@ export class AiService {
     return 'Rapor sonucu alindi.';
   }
 
-  private formatToolResultForUser(call: ToolCall, result: ToolResult): string {
+  private parseOrderSummaryFieldPreferences(userText?: string): {
+    showOrderCount: boolean;
+    showUnitPrice: boolean;
+    showLineTotal: boolean;
+  } {
+    const defaults = {
+      showOrderCount: true,
+      showUnitPrice: true,
+      showLineTotal: true,
+    };
+
+    const text = this.normalizeIntentText(userText ?? '').trim();
+    if (!text) {
+      return defaults;
+    }
+
+    const mentionsOrderCount = /siparis adedi|siparis sayisi|order count/.test(
+      text,
+    );
+    const mentionsUnitPrice = /unit\s*price|birim fiyat|unitprice/.test(text);
+    const mentionsLineTotal = /line\s*total|toplam tutar|ciro|total line/.test(
+      text,
+    );
+
+    const hasNegativeInstruction =
+      /\bdonme\b|\bdondurme\b|\bgosterme\b|\bgetirme\b|\bolmasin\b|\bharic\b|\bexclude\b|\bwithout\b|\bexcept\b/.test(
+        text,
+      );
+
+    const next = { ...defaults };
+
+    if (hasNegativeInstruction) {
+      if (mentionsOrderCount) {
+        next.showOrderCount = false;
+      }
+      if (mentionsUnitPrice) {
+        next.showUnitPrice = false;
+      }
+      if (mentionsLineTotal) {
+        next.showLineTotal = false;
+      }
+    }
+
+    return next;
+  }
+
+  private formatToolResultForUser(
+    call: ToolCall,
+    result: ToolResult,
+    userText?: string,
+  ): string {
     if (!result.ok) {
       return `Rapor verisi alinirken hata olustu: ${result.error ?? 'bilinmeyen hata'}`;
     }
@@ -655,7 +1176,7 @@ export class AiService {
           (row: any, idx: number) =>
             `${idx + 1}. ${row.storeName}: toplam ${this.toNumber(
               row.totalLineTotal,
-            )}, confirmed ${this.toNumber(row.confirmedCount)}, iptal oranı ${this.toNumber(
+            )}, confirmed ${this.toNumber(row.confirmedCount)}, iptal oranÄ± ${this.toNumber(
               row.cancelRate,
             )}%`,
         );
@@ -735,12 +1256,24 @@ export class AiService {
           call.name === 'confirmed_orders_total_report'
             ? 'Confirmed siparis ozeti'
             : 'Iade/iptal siparis ozeti';
-        return [
-          `${label}:`,
-          `- Siparis adedi: ${this.toNumber(totals.orderCount)}`,
-          `- Toplam unit price: ${this.toNumber(totals.totalUnitPrice)}`,
-          `- Toplam line total: ${this.toNumber(totals.totalLineTotal)}`,
-        ].join('\n');
+        const prefs = this.parseOrderSummaryFieldPreferences(userText);
+        const lines = [`${label}:`];
+
+        if (prefs.showOrderCount) {
+          lines.push(`- Siparis adedi: ${this.toNumber(totals.orderCount)}`);
+        }
+        if (prefs.showUnitPrice) {
+          lines.push(`- Toplam unit price: ${this.toNumber(totals.totalUnitPrice)}`);
+        }
+        if (prefs.showLineTotal) {
+          lines.push(`- Toplam line total: ${this.toNumber(totals.totalLineTotal)}`);
+        }
+
+        if (lines.length === 1) {
+          lines.push('- Gosterilecek alan kalmadi.');
+        }
+
+        return lines.join('\n');
       }
 
       case 'sales_by_product_report': {
@@ -815,55 +1348,53 @@ export class AiService {
     const system = { role: 'system', content: toolSystemPrompt() };
     const initialMessages = [system, ...body.messages];
 
-    // 1) Ilk cagrı (non-stream, düsük temp): tool gerekiyor mu?
-    const first = await this.chatOnceRaw(initialMessages, true);
-    const content = String(first?.message?.content ?? '');
+    // 1) Deterministik intent varsa dogrudan tool sec (ek LLM turunu atla).
+    const inferredDirect = this.inferToolCallFromUserMessage(body.messages);
+    let toolCall: ToolCall | null = null;
+    if (inferredDirect) {
+      toolCall = await this.ensureDateRangeArgs(
+        this.ensureGetProductStockArgs(inferredDirect, body.messages),
+        body.messages,
+      );
+    }
 
-    const parsed = this.tryParseToolCall(content);
-    const normalized = parsed
-      ? this.normalizeToolCallByIntent(parsed, body.messages)
-      : null;
-    const fallback = normalized ? null : this.inferToolCallFromUserMessage(body.messages);
-    const selected = normalized ?? fallback;
-    const toolCall = selected
-      ? this.ensureGetProductStockArgs(selected, body.messages)
-      : null;
-
-    // Tool gerekmezse direkt stream final.
+    // 2) Belirsiz durumda ilk non-stream cevapla tool cagrisi parse et.
     if (!toolCall) {
-      const url = this.chatUrl;
-      const payload = {
-        model: this.model,
-        stream: true,
-        messages: initialMessages,
-        options: {
-          num_ctx: this.numCtx,
-          temperature: 0.7,
-          top_p: 0.9,
-        },
-      };
-      try {
-        const res = await firstValueFrom(
-          this.http.post(url, payload, {
-            responseType: 'stream',
-            timeout: this.requestTimeoutMs,
-          }),
+      const first = await this.chatOnceRaw(initialMessages, true);
+      const content = String(first?.message?.content ?? '');
+      const parsed = this.tryParseToolCall(content);
+      const normalized = parsed
+        ? this.normalizeToolCallByIntent(parsed, body.messages)
+        : null;
+      const selected = normalized ?? this.inferToolCallFromUserMessage(body.messages);
+      if (selected) {
+        toolCall = await this.ensureDateRangeArgs(
+          this.ensureGetProductStockArgs(selected, body.messages),
+          body.messages,
         );
-        return res.data;
-      } catch (err: any) {
-        this.throwNormalizedOllamaError(err, url);
+      } else {
+        toolCall = null;
+      }
+
+      if (!toolCall) {
+        return this.buildSingleMessageStream(content);
       }
     }
 
-    // 2) Tool'u calistir.
+    // 3) Tool'u calistir.
     if (body.storeId && toolCall.args && toolCall.args.storeId == null) {
       toolCall.args.storeId = body.storeId;
     }
 
     const toolResult = await this.tools.execute(toolCall);
 
-    // 3) Tool sonucunu deterministik formatta dondur.
-    const finalContent = this.formatToolResultForUser(toolCall, toolResult);
+    // 4) Tool sonucunu deterministik formatta dondur.
+    const finalContent = this.formatToolResultForUser(
+      toolCall,
+      toolResult,
+      this.getLastUserMessage(body.messages),
+    );
     return this.buildSingleMessageStream(finalContent);
   }
 }
+

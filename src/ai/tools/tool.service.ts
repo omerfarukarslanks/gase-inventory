@@ -8,6 +8,26 @@ type DateRangeOptions = {
   defaultToCurrentMonth?: boolean;
 };
 
+const PRODUCT_SEARCH_STOP_WORDS = new Set([
+  'urun',
+  'urunun',
+  'urunu',
+  'urununun',
+  'stok',
+  'durum',
+  'durumu',
+  'durumunu',
+  'goster',
+  'gosterebilir',
+  'gosterir',
+  'ver',
+  'getir',
+  'bana',
+  'lutfen',
+]);
+
+const PRODUCT_SEARCH_BATCH_SIZE = 3;
+
 @Injectable()
 export class ToolService {
   constructor(
@@ -156,26 +176,8 @@ export class ToolService {
       .map((part) => part.trim())
       .filter(Boolean);
 
-    const stopWords = new Set([
-      'urun',
-      'urunun',
-      'urunu',
-      'urununun',
-      'stok',
-      'durum',
-      'durumu',
-      'durumunu',
-      'goster',
-      'gosterebilir',
-      'gosterir',
-      'ver',
-      'getir',
-      'bana',
-      'lutfen',
-    ]);
-
     const filteredWords = words.filter(
-      (word) => word.length >= 2 && !stopWords.has(word),
+      (word) => word.length >= 2 && !PRODUCT_SEARCH_STOP_WORDS.has(word),
     );
 
     const dedup = new Set<string>();
@@ -308,6 +310,18 @@ export class ToolService {
     return undefined;
   }
 
+  private async searchProductsByCandidate(candidate: string): Promise<any[]> {
+    const products = await this.products.findAll({
+      page: 1,
+      limit: 20,
+      search: candidate,
+      sortBy: 'createdAt',
+      sortOrder: 'DESC',
+    } as any);
+
+    return Array.isArray(products?.data) ? products.data : [];
+  }
+
   private async resolveProductIdByReference(
     reference: string,
   ): Promise<{
@@ -327,18 +341,27 @@ export class ToolService {
     const candidates = this.buildProductSearchCandidates(ref);
     let rows: any[] = [];
 
-    for (const candidate of candidates) {
-      const products = await this.products.findAll({
-        page: 1,
-        limit: 20,
-        search: candidate,
-        sortBy: 'createdAt',
-        sortOrder: 'DESC',
-      } as any);
+    const firstBatch = candidates.slice(0, PRODUCT_SEARCH_BATCH_SIZE);
+    if (firstBatch.length > 0) {
+      const firstBatchResults = await Promise.all(
+        firstBatch.map((candidate) => this.searchProductsByCandidate(candidate)),
+      );
 
-      rows = Array.isArray(products?.data) ? products.data : [];
-      if (rows.length > 0) {
-        break;
+      for (const batchRows of firstBatchResults) {
+        if (batchRows.length > 0) {
+          rows = batchRows;
+          break;
+        }
+      }
+    }
+
+    if (rows.length === 0 && candidates.length > PRODUCT_SEARCH_BATCH_SIZE) {
+      for (const candidate of candidates.slice(PRODUCT_SEARCH_BATCH_SIZE)) {
+        const candidateRows = await this.searchProductsByCandidate(candidate);
+        if (candidateRows.length > 0) {
+          rows = candidateRows;
+          break;
+        }
       }
     }
 
@@ -353,26 +376,71 @@ export class ToolService {
       id: item.id,
       name: item.name,
       sku: item.sku,
+      normalizedName: this.normalizeText(String(item.name ?? '')),
+      normalizedSku: item.sku ? this.normalizeText(String(item.sku)) : '',
     }));
 
     const exact =
       mappedCandidates.find(
         (item) =>
-          this.normalizeText(item.name) === normalizedRef ||
-          (item.sku ? this.normalizeText(item.sku) === normalizedRef : false),
+          item.normalizedName === normalizedRef ||
+          item.normalizedSku === normalizedRef,
       ) ??
       mappedCandidates.find(
         (item) =>
-          this.normalizeText(item.name).includes(normalizedRef) ||
-          normalizedRef.includes(this.normalizeText(item.name)),
+          item.normalizedName.includes(normalizedRef) ||
+          normalizedRef.includes(item.normalizedName),
       ) ??
       mappedCandidates[0];
 
     return {
       productId: exact?.id,
       productName: exact?.name,
-      candidates: mappedCandidates.slice(0, 5),
+      candidates: mappedCandidates
+        .slice(0, 5)
+        .map(({ id, name, sku }) => ({ id, name, sku })),
     };
+  }
+
+  private pickBestStockMatch(
+    rows: any[],
+    resolvedProductId: string | undefined,
+    productRef: string,
+  ): any | null {
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return null;
+    }
+
+    const normalizedRef = this.normalizeText(productRef);
+    let best: any | null = null;
+    let bestScore = -1;
+
+    for (const row of rows) {
+      let score = 0;
+      if (resolvedProductId && row?.productId === resolvedProductId) {
+        score = 3;
+      } else {
+        const normalizedName = this.normalizeText(String(row?.productName ?? ''));
+        if (normalizedName === normalizedRef) {
+          score = 2;
+        } else if (
+          normalizedName.includes(normalizedRef) ||
+          normalizedRef.includes(normalizedName)
+        ) {
+          score = 1;
+        }
+      }
+
+      if (score > bestScore) {
+        best = row;
+        bestScore = score;
+        if (score === 3) {
+          break;
+        }
+      }
+    }
+
+    return best;
   }
 
   private resolveStoreIds(args: Record<string, any>): string[] {
@@ -542,30 +610,22 @@ export class ToolService {
           }
 
           const storeIds = this.resolveStoreIds(args);
-          const summary = await this.inventory.getStockSummary({
+          const searchTerm =
+            this.parseTrimmedString(resolved.productName) ??
+            (this.isUuidV4(productRef) ? undefined : productRef);
+          const summaryQuery: Record<string, any> = {
             storeIds: storeIds.length > 0 ? storeIds : undefined,
-          } as any);
+          };
+          if (searchTerm) {
+            summaryQuery.search = searchTerm;
+          }
+          const summary = await this.inventory.getStockSummary(summaryQuery as any);
 
-          const normalizedRef = this.normalizeText(productRef);
-          const stock =
-            summary.data.find(
-              (item: any) => item.productId === resolved.productId,
-            ) ??
-            summary.data.find(
-              (item: any) =>
-                this.normalizeText(String(item.productName ?? '')) ===
-                normalizedRef,
-            ) ??
-            summary.data.find((item: any) => {
-              const normalizedName = this.normalizeText(
-                String(item.productName ?? ''),
-              );
-              return (
-                normalizedName.includes(normalizedRef) ||
-                normalizedRef.includes(normalizedName)
-              );
-            }) ??
-            null;
+          const stock = this.pickBestStockMatch(
+            summary?.data ?? [],
+            resolved.productId,
+            productRef,
+          );
 
           return {
             name: call.name,
@@ -624,7 +684,9 @@ export class ToolService {
         }
 
         case 'confirmed_orders_total_report': {
-          const query = this.buildSalesFilterQuery(args);
+          const query = this.buildSalesFilterQuery(args, {
+            defaultToCurrentMonth: true,
+          });
           const data = await this.reports.getTotalConfirmedOrdersReport(
             query as any,
           );
@@ -632,7 +694,9 @@ export class ToolService {
         }
 
         case 'returned_orders_total_report': {
-          const query = this.buildSalesFilterQuery(args);
+          const query = this.buildSalesFilterQuery(args, {
+            defaultToCurrentMonth: true,
+          });
           const data = await this.reports.getTotalReturnedOrdersReport(
             query as any,
           );
