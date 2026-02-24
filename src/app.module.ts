@@ -23,6 +23,7 @@ import { PriceModule } from './pricing/price.module';
 import { AttributeModule } from './attribute/attribute.module';
 import { AiModule } from './ai/ai.module';
 import { SupplierModule } from './supplier/supplier.module';
+import { CustomerModule } from './customer/customer.module';
 
 @Module({
   imports: [
@@ -92,6 +93,7 @@ import { SupplierModule } from './supplier/supplier.module';
     AttributeModule,
     AiModule,
     SupplierModule,
+    CustomerModule,
   ],
   controllers: [AppController],
   providers: [
