@@ -1,5 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { SupportedCurrency } from 'src/common/constants/currency.constants';
 
 export class CreateStoreDto {
   @ApiProperty({ example: 'Kadıköy Mağaza' })
@@ -31,4 +32,14 @@ export class CreateStoreDto {
   @IsString()
   @IsOptional()
   description?: string;
+
+  @ApiPropertyOptional({
+    example: SupportedCurrency.TRY,
+    description: 'Mağazanın baz para birimi (varsayılan: TRY)',
+    enum: SupportedCurrency,
+    default: SupportedCurrency.TRY,
+  })
+  @IsEnum(SupportedCurrency)
+  @IsOptional()
+  currency?: SupportedCurrency;
 }

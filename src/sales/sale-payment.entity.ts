@@ -1,4 +1,5 @@
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
+import { SupportedCurrency } from 'src/common/constants/currency.constants';
 import { Column, Entity, ManyToOne } from 'typeorm';
 import { Sale } from './sale.entity';
 
@@ -44,4 +45,27 @@ export class SalePayment extends AuditableEntity {
 
   @Column({ type: 'uuid', nullable: true })
   cancelledById?: string | null;
+
+  /** Ödemenin yapıldığı para birimi */
+  @Column({
+    type: 'enum',
+    enum: SupportedCurrency,
+    default: SupportedCurrency.TRY,
+  })
+  currency: SupportedCurrency;
+
+  /**
+   * Ödeme anındaki kur snapshot'ı.
+   * 1 birim payment.currency = exchangeRate birim store.currency
+   * (TRY ödeme ise 1.0, USD ödeme + TRY mağaza ise ~38.5)
+   */
+  @Column({ type: 'numeric', precision: 18, scale: 6, default: 1 })
+  exchangeRate: number;
+
+  /**
+   * amount × exchangeRate — mağazanın baz para birimindeki karşılık.
+   * paidAmount hesabı bu alan üzerinden yapılır.
+   */
+  @Column({ type: 'numeric', precision: 18, scale: 4, default: 0 })
+  amountInBaseCurrency: number;
 }

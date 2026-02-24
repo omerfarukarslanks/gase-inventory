@@ -1,4 +1,5 @@
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
+import { SupportedCurrency } from 'src/common/constants/currency.constants';
 import { Tenant } from 'src/tenant/tenant.entity';
 import { UserStore } from 'src/user/user-store.entity';
 import { Column, Entity, ManyToOne, OneToMany, Unique } from 'typeorm';
@@ -29,6 +30,14 @@ export class Store extends AuditableEntity {
 
   @Column({ nullable: true })
   description?: string;
+
+  /** Mağazanın baz para birimi (varsayılan: TRY) */
+  @Column({
+    type: 'enum',
+    enum: SupportedCurrency,
+    default: SupportedCurrency.TRY,
+  })
+  currency: SupportedCurrency;
 
   @OneToMany(() => UserStore, (userStore) => userStore.store)
   userStores: UserStore[];

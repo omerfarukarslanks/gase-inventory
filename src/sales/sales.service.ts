@@ -11,6 +11,8 @@ import { SaleLine } from './sale-line.entity';
 import { SalePayment, SalePaymentStatus } from './sale-payment.entity';
 import { AddPaymentDto } from './dto/add-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { ExchangeRateService } from 'src/exchange-rate/exchange-rate.service';
+import { SupportedCurrency } from 'src/common/constants/currency.constants';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import { AppContextService } from '../common/context/app-context.service';
@@ -48,6 +50,7 @@ export class SalesService {
     private readonly inventoryService: InventoryService,
     private readonly priceService: PriceService,
     private readonly dataSource: DataSource,
+    private readonly exchangeRateService: ExchangeRateService,
   ) { }
 
   private getSaleRepo(manager?: EntityManager): Repository<Sale> {
@@ -355,17 +358,26 @@ export class SalesService {
 
     // 5) Başlangıç ödemesi varsa kaydet
     if (dto.initialPayment) {
+      const storeCurrency = store.currency ?? SupportedCurrency.TRY;
+      const paymentCurrency = dto.initialPayment.currency ?? storeCurrency;
+      const exchangeRate = await this.resolveExchangeRate(paymentCurrency, storeCurrency);
+      const amountInBaseCurrency = Number(dto.initialPayment.amount) * exchangeRate;
+
       const payment = manager.getRepository(SalePayment).create({
         sale: { id: savedSale.id } as any,
         amount: dto.initialPayment.amount,
         paymentMethod: dto.initialPayment.paymentMethod,
         note: dto.initialPayment.note,
         paidAt: dto.initialPayment.paidAt ? new Date(dto.initialPayment.paidAt) : new Date(),
+        status: SalePaymentStatus.ACTIVE,
+        currency: paymentCurrency,
+        exchangeRate,
+        amountInBaseCurrency,
         createdById: userId,
         updatedById: userId,
       });
       await manager.getRepository(SalePayment).save(payment);
-      savedSale.paidAmount = Number(dto.initialPayment.amount);
+      savedSale.paidAmount = amountInBaseCurrency;
     }
 
     savedSale.paymentStatus = this.computePaymentStatus(savedSale.paidAmount ?? 0, totalLineTotal);
@@ -722,6 +734,13 @@ export class SalesService {
       throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
     }
 
+    const recalculatedPaidAmount = await this.recalcPaidAmount(sale.id);
+    sale.paidAmount = recalculatedPaidAmount;
+    sale.paymentStatus = this.computePaymentStatus(
+      recalculatedPaidAmount,
+      Number(sale.lineTotal || 0),
+    );
+
     return {
       id: sale.id,
       createdAt: sale.createdAt,
@@ -937,8 +956,19 @@ export class SalesService {
         ]);
     }
 
-    const exposeRemaining = (sales: Sale[]) => {
+    const exposeRemaining = async (sales: Sale[]) => {
+      const paidAmountBySaleId = await this.recalcPaidAmountsBySaleIds(
+        sales.map((sale) => sale.id),
+      );
+
       for (const s of sales) {
+        const recalculatedPaidAmount = paidAmountBySaleId.get(s.id) ?? 0;
+        s.paidAmount = recalculatedPaidAmount;
+        s.paymentStatus = this.computePaymentStatus(
+          recalculatedPaidAmount,
+          Number(s.lineTotal || 0),
+        );
+
         Object.defineProperty(s, 'remainingAmount', {
           value: s.remainingAmount,
           enumerable: true,
@@ -950,7 +980,7 @@ export class SalesService {
 
     if (!query.hasPagination) {
       const sales = await qb.getMany();
-      return { data: exposeRemaining(sales) };
+      return { data: await exposeRemaining(sales) };
     }
 
     const page = Math.max(1, Math.trunc(query.page ?? 1));
@@ -960,7 +990,7 @@ export class SalesService {
     const [sales, total] = await qb.skip(skip).take(limit).getManyAndCount();
 
     return {
-      data: exposeRemaining(sales),
+      data: await exposeRemaining(sales),
       meta: {
         total,
         limit,
@@ -972,18 +1002,58 @@ export class SalesService {
 
   // ---- Ödeme işlemleri ----
 
-  /** ACTIVE + UPDATED statüsündeki ödemelerin toplamını DB'den çeker. */
-  private async recalcPaidAmount(saleId: string): Promise<number> {
-    const result = await this.getSalePaymentRepo()
+  /**
+   * ACTIVE + UPDATED statüsündeki ödemelerin mağaza baz para birimindeki
+   * toplamını (amountInBaseCurrency) DB'den çeker.
+   */
+  private async recalcPaidAmountsBySaleIds(
+    saleIds: string[],
+  ): Promise<Map<string, number>> {
+    const uniqueSaleIds = Array.from(new Set(saleIds.filter(Boolean)));
+    if (uniqueSaleIds.length === 0) {
+      return new Map();
+    }
+
+    const rows = await this.getSalePaymentRepo()
       .createQueryBuilder('p')
-      .select('COALESCE(SUM(p.amount), 0)', 'total')
-      .where('p.saleId = :saleId', { saleId })
+      .select('p.saleId', 'saleId')
+      .addSelect(
+        `COALESCE(
+          SUM(
+            CASE
+              WHEN COALESCE(p."amountInBaseCurrency", 0) > 0
+                THEN p."amountInBaseCurrency"
+              ELSE COALESCE(p.amount, 0) * COALESCE(NULLIF(p."exchangeRate", 0), 1)
+            END
+          ),
+          0
+        )`,
+        'total',
+      )
+      .where('p.saleId IN (:...saleIds)', { saleIds: uniqueSaleIds })
       .andWhere('p.status IN (:...statuses)', {
         statuses: [SalePaymentStatus.ACTIVE, SalePaymentStatus.UPDATED],
       })
-      .getRawOne<{ total: string }>();
+      .groupBy('p.saleId')
+      .getRawMany<{ saleId: string; total: string }>();
 
-    return Number(result?.total ?? 0);
+    return new Map(rows.map((row) => [row.saleId, Number(row.total ?? 0)]));
+  }
+
+  private async recalcPaidAmount(saleId: string): Promise<number> {
+    const paidAmountBySaleId = await this.recalcPaidAmountsBySaleIds([saleId]);
+    return paidAmountBySaleId.get(saleId) ?? 0;
+  }
+
+  /**
+   * Ödeme para birimi ile mağaza baz para birimi arasındaki kuru döner.
+   * Kur snapshot'ı ödeme anına aittir; TRY-TRY için 1.0 döner.
+   */
+  private async resolveExchangeRate(
+    paymentCurrency: SupportedCurrency,
+    storeCurrency: SupportedCurrency,
+  ): Promise<number> {
+    return this.exchangeRateService.getExchangeRate(paymentCurrency, storeCurrency);
   }
 
   async listPayments(saleId: string): Promise<SalePayment[]> {
@@ -1000,7 +1070,7 @@ export class SalesService {
 
     return this.getSalePaymentRepo().find({
       where: { sale: { id: saleId } },
-      order: { paidAt: 'ASC' },
+      order: { updatedAt: 'DESC' },
     });
   }
 
@@ -1014,11 +1084,17 @@ export class SalesService {
     const saleRepo = this.getSaleRepo();
     const sale = await saleRepo.findOne({
       where: { id: saleId, tenant: { id: tenantId } },
+      relations: ['store'],
     });
 
     if (!sale) {
       throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
     }
+
+    const storeCurrency = (sale.store?.currency ?? SupportedCurrency.TRY) as SupportedCurrency;
+    const paymentCurrency = dto.currency ?? storeCurrency;
+    const exchangeRate = await this.resolveExchangeRate(paymentCurrency, storeCurrency);
+    const amountInBaseCurrency = Number(dto.amount) * exchangeRate;
 
     const payment = this.getSalePaymentRepo().create({
       sale: { id: saleId } as any,
@@ -1027,6 +1103,9 @@ export class SalesService {
       note: dto.note,
       paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
       status: SalePaymentStatus.ACTIVE,
+      currency: paymentCurrency,
+      exchangeRate,
+      amountInBaseCurrency,
       createdById: userId,
       updatedById: userId,
     });
@@ -1059,6 +1138,7 @@ export class SalesService {
     const saleRepo = this.getSaleRepo();
     const sale = await saleRepo.findOne({
       where: { id: saleId, tenant: { id: tenantId } },
+      relations: ['store'],
     });
 
     if (!sale) {
@@ -1084,14 +1164,24 @@ export class SalesService {
     old.updatedById = userId;
     await this.getSalePaymentRepo().save(old);
 
+    // Yeni değerler üzerinden kur hesapla
+    const storeCurrency = (sale.store?.currency ?? SupportedCurrency.TRY) as SupportedCurrency;
+    const newPaymentCurrency = dto.currency ?? old.currency ?? storeCurrency;
+    const newExchangeRate = await this.resolveExchangeRate(newPaymentCurrency, storeCurrency);
+    const newAmount = dto.amount ?? Number(old.amount);
+    const newAmountInBase = newAmount * newExchangeRate;
+
     // Güncel değerlerle yeni kayıt aç
     const updated = this.getSalePaymentRepo().create({
       sale: { id: saleId } as any,
-      amount: dto.amount ?? Number(old.amount),
+      amount: newAmount,
       paymentMethod: dto.paymentMethod ?? old.paymentMethod,
       note: dto.note !== undefined ? dto.note : old.note,
       paidAt: dto.paidAt ? new Date(dto.paidAt) : old.paidAt,
       status: SalePaymentStatus.UPDATED,
+      currency: newPaymentCurrency,
+      exchangeRate: newExchangeRate,
+      amountInBaseCurrency: newAmountInBase,
       createdById: userId,
       updatedById: userId,
     });

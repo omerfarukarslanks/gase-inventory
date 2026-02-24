@@ -24,6 +24,8 @@ import { AttributeModule } from './attribute/attribute.module';
 import { AiModule } from './ai/ai.module';
 import { SupplierModule } from './supplier/supplier.module';
 import { CustomerModule } from './customer/customer.module';
+import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -94,6 +96,8 @@ import { CustomerModule } from './customer/customer.module';
     AiModule,
     SupplierModule,
     CustomerModule,
+    ScheduleModule.forRoot(),
+    ExchangeRateModule,
   ],
   controllers: [AppController],
   providers: [

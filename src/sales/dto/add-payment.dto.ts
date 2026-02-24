@@ -8,6 +8,7 @@ import {
   IsString,
 } from 'class-validator';
 import { PaymentMethod } from '../sale-payment.entity';
+import { SupportedCurrency } from 'src/common/constants/currency.constants';
 
 export class AddPaymentDto {
   @ApiProperty({ example: 150.0, description: 'Ödenen tutar' })
@@ -37,4 +38,13 @@ export class AddPaymentDto {
   @IsDateString()
   @IsOptional()
   paidAt?: string;
+
+  @ApiPropertyOptional({
+    example: SupportedCurrency.TRY,
+    description: 'Ödemenin para birimi (verilmezse mağazanın baz para birimi kullanılır)',
+    enum: SupportedCurrency,
+  })
+  @IsEnum(SupportedCurrency)
+  @IsOptional()
+  currency?: SupportedCurrency;
 }
