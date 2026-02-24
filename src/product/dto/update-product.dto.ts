@@ -47,4 +47,13 @@ export class UpdateProductDto extends PriceFieldsDto {
   @IsOptional()
   @IsBoolean()
   applyToAllStores?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Tedarikçi ID (null göndererek ilişkiyi kaldırabilirsiniz)',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID('4')
+  supplierId?: string | null;
 }

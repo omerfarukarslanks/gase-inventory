@@ -61,4 +61,12 @@ export class CreateProductDto extends PriceFieldsDto {
   @IsOptional()
   @IsBoolean()
   applyToAllStores?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Tedarikçi ID (tenant\'a ait olmalı)',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+  })
+  @IsOptional()
+  @IsUUID('4')
+  supplierId?: string;
 }

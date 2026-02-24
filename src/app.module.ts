@@ -22,6 +22,7 @@ import { join } from 'path';
 import { PriceModule } from './pricing/price.module';
 import { AttributeModule } from './attribute/attribute.module';
 import { AiModule } from './ai/ai.module';
+import { SupplierModule } from './supplier/supplier.module';
 
 @Module({
   imports: [
@@ -89,7 +90,8 @@ import { AiModule } from './ai/ai.module';
     StockTransferModule,
     PriceModule,
     AttributeModule,
-    AiModule
+    AiModule,
+    SupplierModule,
   ],
   controllers: [AppController],
   providers: [

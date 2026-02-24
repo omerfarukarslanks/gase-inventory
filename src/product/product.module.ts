@@ -9,6 +9,7 @@ import { AttributeValue } from 'src/attribute/entity/attribute-value.entity';
 import { Store } from 'src/store/store.entity';
 import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
+import { Supplier } from 'src/supplier/supplier.entity';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
       Store,
       StoreVariantStock,
       StoreProductPrice,
+      Supplier,
     ]),
   ],
   providers: [ProductService],

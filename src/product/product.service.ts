@@ -29,6 +29,8 @@ import { Store } from 'src/store/store.entity';
 import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
+import { Supplier } from 'src/supplier/supplier.entity';
+import { SupplierErrors } from 'src/common/errors/supplier.errors';
 
 type ResolvedAttributeGroup = {
   attributeId: string;
@@ -70,6 +72,7 @@ type ProductVariantListItem = {
 type ProductResponseShape = Product & {
   storeIds?: string[];
   applyToAllStores?: boolean;
+  supplierId?: string | null;
   currency?: string;
   purchasePrice?: number | null;
   unitPrice?: number | null;
@@ -97,6 +100,8 @@ export class ProductService {
     private readonly storeVariantStockRepo: Repository<StoreVariantStock>,
     @InjectRepository(StoreProductPrice)
     private readonly storeProductPriceRepo: Repository<StoreProductPrice>,
+    @InjectRepository(Supplier)
+    private readonly supplierRepo: Repository<Supplier>,
     private readonly appContext: AppContextService,
     private readonly dataSource: DataSource,
   ) {}
@@ -115,6 +120,23 @@ export class ProductService {
 
   private getAttributeValueRepo(manager?: EntityManager): Repository<AttributeValue> {
     return manager ? manager.getRepository(AttributeValue) : this.attributeValueRepo;
+  }
+
+  private getSupplierRepo(manager?: EntityManager): Repository<Supplier> {
+    return manager ? manager.getRepository(Supplier) : this.supplierRepo;
+  }
+
+  private async ensureSupplierOfTenant(
+    supplierId: string,
+    tenantId: string,
+    manager?: EntityManager,
+  ): Promise<void> {
+    const supplier = await this.getSupplierRepo(manager).findOne({
+      where: { id: supplierId, tenant: { id: tenantId } },
+    });
+    if (!supplier) {
+      throw new NotFoundException(SupplierErrors.SUPPLIER_NOT_FOUND);
+    }
   }
 
   private getStoreRepo(manager?: EntityManager): Repository<Store> {
@@ -317,6 +339,8 @@ export class ProductService {
       typedProduct.storeIds = storeIds;
       typedProduct.applyToAllStores =
         totalStoreCount > 0 && storeIds.length === totalStoreCount;
+      typedProduct.supplierId = (product.supplier as Supplier | null)?.id ?? null;
+      product.supplier = undefined;
 
       typedProduct.currency = product.defaultCurrency ?? 'TRY';
       typedProduct.purchasePrice =
@@ -344,6 +368,7 @@ export class ProductService {
       attributes,
       storeIds,
       applyToAllStores,
+      supplierId,
       currency,
       purchasePrice,
       unitPrice,
@@ -354,6 +379,10 @@ export class ProductService {
       lineTotal,
       ...productPayload
     } = dto;
+
+    if (supplierId) {
+      await this.ensureSupplierOfTenant(supplierId, tenantId, manager);
+    }
 
     const product = repo.create({
       ...productPayload,
@@ -367,6 +396,7 @@ export class ProductService {
         taxAmount,
         lineTotal,
       }),
+      ...(supplierId ? { supplier: { id: supplierId } as any } : {}),
       tenant: { id: tenantId } as any,
       createdById: userId,
       updatedById: userId,
@@ -466,6 +496,8 @@ export class ProductService {
         'product.createdAt',
         'product.updatedAt',
       ])
+      .leftJoin('product.supplier', 'supplier')
+      .addSelect('supplier.id')
       .where('product.tenantId = :tenantId', { tenantId })
       .orderBy(`product.${safeSortBy}`, safeSortOrder)
       .skip(skip)
@@ -628,9 +660,13 @@ export class ProductService {
     }
 
     await this.attachProductScopeAndPriceFields(products, manager);
+    const responseData = products.map((product) => ({
+      ...(product as ProductResponseShape),
+      supplierId: (product as ProductResponseShape).supplierId ?? null,
+    }));
 
     return {
-      data: products,
+      data: responseData,
       meta: {
         total,
         limit,
@@ -666,6 +702,8 @@ export class ProductService {
         'product.updatedAt',
         'product.createdById',
       ])
+      .leftJoin('product.supplier', 'supplier')
+      .addSelect('supplier.id')
       .where('product.id = :id', { id })
       .andWhere('product.tenantId = :tenantId', { tenantId })
       .loadRelationCountAndMap('product.variantCount', 'product.variants')
@@ -722,8 +760,7 @@ export class ProductService {
     const activeRow = await activeQb.getRawOne<{ hasActiveStoreRow: string | null }>();
     product.isActive = Number(activeRow?.hasActiveStoreRow ?? 0) > 0;
     await this.attachProductScopeAndPriceFields([product], manager);
-
-    return product;
+    return product as Product;
   }
 
   async update(id: string, dto: UpdateProductDto, manager?: EntityManager): Promise<Product> {
@@ -734,6 +771,7 @@ export class ProductService {
       isActive: nextIsActive,
       storeIds,
       applyToAllStores,
+      supplierId,
       currency,
       purchasePrice,
       unitPrice,
@@ -766,7 +804,7 @@ export class ProductService {
       hasStoreStateChange = true;
     }
 
-    if (Object.keys(restDto).length === 0) {
+    if (Object.keys(restDto).length === 0 && supplierId === undefined) {
       const hasPriceUpdate =
         currency !== undefined ||
         purchasePrice !== undefined ||
@@ -782,9 +820,20 @@ export class ProductService {
     }
 
     const userId = this.appContext.getUserIdOrThrow();
+    const tenantId = this.appContext.getTenantIdOrThrow();
+
+    let supplierUpdate: Record<string, unknown> = {};
+    if (supplierId === null) {
+      supplierUpdate = { supplier: null };
+    } else if (supplierId !== undefined) {
+      await this.ensureSupplierOfTenant(supplierId, tenantId, manager);
+      supplierUpdate = { supplier: { id: supplierId } as any };
+    }
+
     Object.assign(
       product,
       restDto,
+      supplierUpdate,
       this.getUpdateProductPriceDefaults({
         currency,
         purchasePrice,
@@ -796,7 +845,7 @@ export class ProductService {
         lineTotal,
       }),
       {
-      updatedById: userId,
+        updatedById: userId,
       },
     );
     return repo.save(product);
