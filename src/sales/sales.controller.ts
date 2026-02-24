@@ -1,9 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
-  Patch,
+  HttpCode,
+  HttpStatus,
   Param,
+  ParseUUIDPipe,
+  Patch,
   Post,
   Query,
   UseGuards,
@@ -17,9 +21,11 @@ import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.deco
 import { ListSalesForStoreQueryDto } from './dto/list-sales.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import { CancelSaleDto } from './dto/cancel-sale.dto';
+import { AddPaymentDto } from './dto/add-payment.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 
 @ApiTags('Sales')
-@ApiBearerAuth('access-token') // DocumentBuilder içindeki key
+@ApiBearerAuth('access-token')
 @Controller('sales')
 @UseGuards(JwtAuthGuard)
 export class SalesController {
@@ -56,5 +62,42 @@ export class SalesController {
   @ApiOperation({ summary: 'Satış fişini iptal et ve stok iadesi yap' })
   cancelSale(@Param('id') id: string, @Body() dto: CancelSaleDto) {
     return this.salesService.cancelSale(id, dto);
+  }
+
+  // ---- Ödeme işlemleri ----
+
+  @Get(':id/payments')
+  @ApiOperation({ summary: 'Satış fişinin ödeme kayıtlarını listele' })
+  listPayments(@Param('id', ParseUUIDPipe) id: string) {
+    return this.salesService.listPayments(id);
+  }
+
+  @Post(':id/payments')
+  @ApiOperation({ summary: 'Satış fişine ödeme kaydı ekle' })
+  addPayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: AddPaymentDto,
+  ) {
+    return this.salesService.addPayment(id, dto);
+  }
+
+  @Patch(':id/payments/:paymentId')
+  @ApiOperation({ summary: 'Ödeme kaydını güncelle (eski kayıt iptal → yeni kayıt açılır)' })
+  updatePayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+    @Body() dto: UpdatePaymentDto,
+  ) {
+    return this.salesService.updatePayment(id, paymentId, dto);
+  }
+
+  @Delete(':id/payments/:paymentId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Ödeme kaydını iptal et (soft-cancel) ve kalan tutarı güncelle' })
+  deletePayment(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('paymentId', ParseUUIDPipe) paymentId: string,
+  ) {
+    return this.salesService.deletePayment(id, paymentId);
   }
 }

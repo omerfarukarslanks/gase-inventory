@@ -277,7 +277,7 @@ export class ReportsController {
 
   @Get('customers/top')
   @ApiOperation({
-    summary: 'En iyi musteriler: telefon bazinda gruplama, toplam harcama, siparis sayisi',
+    summary: 'En iyi musteriler: customer bazinda gruplama, toplam harcama, siparis sayisi',
   })
   getTopCustomers(@Query() query: ReportScopeQueryDto) {
     return this.reportsService.getTopCustomersReport(query);
@@ -287,7 +287,7 @@ export class ReportsController {
 
   @Get('customers/purchase-history')
   @ApiOperation({
-    summary: 'Musteri satin alma gecmisi: telefon/email ile belirli musteri satislari',
+    summary: 'Musteri satin alma gecmisi: customerId/telefon/email ile belirli musteri satislari',
   })
   getCustomerPurchaseHistory(@Query() query: CustomerQueryDto) {
     return this.reportsService.getCustomerPurchaseHistoryReport(query);

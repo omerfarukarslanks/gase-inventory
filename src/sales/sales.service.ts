@@ -6,15 +6,20 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
-import { Sale, SaleStatus } from './sale.entity';
+import { Sale, PaymentStatus, SaleStatus } from './sale.entity';
 import { SaleLine } from './sale-line.entity';
+import { SalePayment, SalePaymentStatus } from './sale-payment.entity';
+import { AddPaymentDto } from './dto/add-payment.dto';
+import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import { AppContextService } from '../common/context/app-context.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { SellStockDto } from '../inventory/dto/sell-stock.dto';
+import { Customer } from 'src/customer/customer.entity';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { CustomerErrors } from 'src/common/errors/customer.errors';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { ProductErrors } from 'src/common/errors/product.errors';
 import { SalesErrors } from 'src/common/errors/sale.errors';
@@ -37,6 +42,8 @@ export class SalesService {
     private readonly storeRepo: Repository<Store>,
     @InjectRepository(ProductVariant)
     private readonly variantRepo: Repository<ProductVariant>,
+    @InjectRepository(SalePayment)
+    private readonly salePaymentRepo: Repository<SalePayment>,
     private readonly appContext: AppContextService,
     private readonly inventoryService: InventoryService,
     private readonly priceService: PriceService,
@@ -57,6 +64,42 @@ export class SalesService {
 
   private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
     return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
+  private getSalePaymentRepo(manager?: EntityManager): Repository<SalePayment> {
+    return manager ? manager.getRepository(SalePayment) : this.salePaymentRepo;
+  }
+
+  private computePaymentStatus(paidAmount: number, lineTotal: number): PaymentStatus {
+    const paid = Number(paidAmount || 0);
+    const total = Number(lineTotal || 0);
+    if (paid <= 0) return PaymentStatus.UNPAID;
+    if (paid >= total) return PaymentStatus.PAID;
+    return PaymentStatus.PARTIAL;
+  }
+
+  private async getTenantCustomerOrThrow(
+    customerId: string,
+    manager: EntityManager,
+  ): Promise<Customer> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const repo = manager.getRepository(Customer);
+    const customer = await repo.findOne({
+      where: { id: customerId, tenant: { id: tenantId } },
+      select: {
+        id: true,
+        name: true,
+        surname: true,
+        phoneNumber: true,
+        email: true,
+      },
+    });
+
+    if (!customer) {
+      throw new NotFoundException(CustomerErrors.CUSTOMER_NOT_FOUND);
+    }
+
+    return customer;
   }
 
   private async getTenantStoreOrThrow(storeId: string, manager?: EntityManager): Promise<Store> {
@@ -165,15 +208,18 @@ export class SalesService {
       manager,
     );
 
+    let customerRelation: { id: string } | null = null;
+    if (dto.customerId) {
+      const customer = await this.getTenantCustomerOrThrow(dto.customerId, manager);
+      customerRelation = { id: customer.id };
+    }
+
     // 1) Sale kaydı
     const sale = saleRepo.create({
       tenant: { id: tenantId } as any,
       store: { id: store.id } as any,
+      ...(customerRelation ? { customer: customerRelation as any } : {}),
       status: SaleStatus.CONFIRMED,
-      name: dto.name,
-      surname: dto.surname,
-      phoneNumber: dto.phoneNumber,
-      email: dto.email,
       meta: dto.meta,
       createdById: userId,
       updatedById: userId,
@@ -306,6 +352,23 @@ export class SalesService {
     savedSale.currency = saleCurrencies.size === 1
       ? Array.from(saleCurrencies)[0]
       : null;
+
+    // 5) Başlangıç ödemesi varsa kaydet
+    if (dto.initialPayment) {
+      const payment = manager.getRepository(SalePayment).create({
+        sale: { id: savedSale.id } as any,
+        amount: dto.initialPayment.amount,
+        paymentMethod: dto.initialPayment.paymentMethod,
+        note: dto.initialPayment.note,
+        paidAt: dto.initialPayment.paidAt ? new Date(dto.initialPayment.paidAt) : new Date(),
+        createdById: userId,
+        updatedById: userId,
+      });
+      await manager.getRepository(SalePayment).save(payment);
+      savedSale.paidAmount = Number(dto.initialPayment.amount);
+    }
+
+    savedSale.paymentStatus = this.computePaymentStatus(savedSale.paidAmount ?? 0, totalLineTotal);
     savedSale.updatedById = userId;
 
     return saleRepo.save(savedSale);
@@ -349,17 +412,11 @@ export class SalesService {
       throw new BadRequestException(SalesErrors.SALE_ALREADY_CANCELLED);
     }
 
-    if (dto.name !== undefined) {
-      sale.name = dto.name;
-    }
-    if (dto.surname !== undefined) {
-      sale.surname = dto.surname;
-    }
-    if (dto.phoneNumber !== undefined) {
-      sale.phoneNumber = dto.phoneNumber;
-    }
-    if (dto.email !== undefined) {
-      sale.email = dto.email;
+    if (dto.customerId === null) {
+      sale.customer = null;
+    } else if (dto.customerId !== undefined) {
+      const customer = await this.getTenantCustomerOrThrow(dto.customerId, manager);
+      sale.customer = { id: customer.id } as any;
     }
     if (dto.meta !== undefined) {
       sale.meta = dto.meta;
@@ -547,6 +604,7 @@ export class SalesService {
       sale.lineTotal = totalLineTotal;
       sale.currency =
         saleCurrencies.size === 1 ? Array.from(saleCurrencies)[0] : null;
+      sale.paymentStatus = this.computePaymentStatus(sale.paidAmount ?? 0, totalLineTotal);
     }
 
     sale.updatedById = userId;
@@ -651,7 +709,13 @@ export class SalesService {
         id,
         tenant: { id: tenantId },
       },
-      relations: ['store', 'lines', 'lines.productVariant', 'lines.productVariant.product'],
+      relations: [
+        'store',
+        'customer',
+        'lines',
+        'lines.productVariant',
+        'lines.productVariant.product',
+      ],
     });
 
     if (!sale) {
@@ -675,13 +739,22 @@ export class SalesService {
       status: sale.status,
       receiptNo: sale.receiptNo ?? null,
       currency: sale.currency ?? null,
-      name: sale.name ?? null,
-      surname: sale.surname ?? null,
-      phoneNumber: sale.phoneNumber ?? null,
-      email: sale.email ?? null,
+      customerId: sale.customer?.id ?? sale.customerId ?? null,
+      customer: sale.customer
+        ? {
+            id: sale.customer.id,
+            name: sale.customer.name ?? null,
+            surname: sale.customer.surname ?? null,
+            phoneNumber: sale.customer.phoneNumber ?? null,
+            email: sale.customer.email ?? null,
+          }
+        : null,
       meta: sale.meta ?? null,
       unitPrice: String(sale.unitPrice ?? 0),
       lineTotal: String(sale.lineTotal ?? 0),
+      paidAmount: String(sale.paidAmount ?? 0),
+      remainingAmount: String(sale.remainingAmount),
+      paymentStatus: sale.paymentStatus,
       lines: (sale.lines ?? []).map((line) => ({
         id: line.id,
         productId: line.productVariant?.product?.id ?? null,
@@ -748,6 +821,7 @@ export class SalesService {
     const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
       .leftJoin('sale.store', 'store')
+      .leftJoin('sale.customer', 'customer')
       .select([
         'sale.id',
         'sale.receiptNo',
@@ -755,15 +829,21 @@ export class SalesService {
         'sale.status',
         'sale.unitPrice',
         'sale.lineTotal',
-        'sale.name',
-        'sale.surname',
-        'sale.phoneNumber',
-        'sale.email',
+        'sale.paidAmount',
+        'sale.paymentStatus',
         'sale.meta',
         'sale.createdAt',
       ])
       .addSelect(['store.id', 'store.name', 'store.code'])
+      .addSelect([
+        'customer.id',
+        'customer.name',
+        'customer.surname',
+        'customer.phoneNumber',
+        'customer.email',
+      ])
       .where('sale.tenantId = :tenantId', { tenantId })
+      .loadRelationIdAndMap('sale.customerId', 'sale.customer')
       .orderBy('sale.createdAt', 'DESC');
 
     if (requestedStoreIds.length > 0) {
@@ -776,12 +856,16 @@ export class SalesService {
       });
     }
 
+    if (query.customerId) {
+      qb.andWhere('sale."customerId" = :customerId', { customerId: query.customerId });
+    }
+
     if (query.name?.trim()) {
-      qb.andWhere('sale.name ILIKE :name', { name: `%${query.name.trim()}%` });
+      qb.andWhere('customer.name ILIKE :name', { name: `%${query.name.trim()}%` });
     }
 
     if (query.surname?.trim()) {
-      qb.andWhere('sale.surname ILIKE :surname', {
+      qb.andWhere('customer.surname ILIKE :surname', {
         surname: `%${query.surname.trim()}%`,
       });
     }
@@ -853,9 +937,20 @@ export class SalesService {
         ]);
     }
 
+    const exposeRemaining = (sales: Sale[]) => {
+      for (const s of sales) {
+        Object.defineProperty(s, 'remainingAmount', {
+          value: s.remainingAmount,
+          enumerable: true,
+          configurable: true,
+        });
+      }
+      return sales;
+    };
+
     if (!query.hasPagination) {
       const sales = await qb.getMany();
-      return { data: sales };
+      return { data: exposeRemaining(sales) };
     }
 
     const page = Math.max(1, Math.trunc(query.page ?? 1));
@@ -865,7 +960,7 @@ export class SalesService {
     const [sales, total] = await qb.skip(skip).take(limit).getManyAndCount();
 
     return {
-      data: sales,
+      data: exposeRemaining(sales),
       meta: {
         total,
         limit,
@@ -873,5 +968,186 @@ export class SalesService {
         totalPages: Math.ceil(total / limit),
       },
     };
+  }
+
+  // ---- Ödeme işlemleri ----
+
+  /** ACTIVE + UPDATED statüsündeki ödemelerin toplamını DB'den çeker. */
+  private async recalcPaidAmount(saleId: string): Promise<number> {
+    const result = await this.getSalePaymentRepo()
+      .createQueryBuilder('p')
+      .select('COALESCE(SUM(p.amount), 0)', 'total')
+      .where('p.saleId = :saleId', { saleId })
+      .andWhere('p.status IN (:...statuses)', {
+        statuses: [SalePaymentStatus.ACTIVE, SalePaymentStatus.UPDATED],
+      })
+      .getRawOne<{ total: string }>();
+
+    return Number(result?.total ?? 0);
+  }
+
+  async listPayments(saleId: string): Promise<SalePayment[]> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+
+    const sale = await this.getSaleRepo().findOne({
+      where: { id: saleId, tenant: { id: tenantId } },
+      select: { id: true },
+    });
+
+    if (!sale) {
+      throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+    }
+
+    return this.getSalePaymentRepo().find({
+      where: { sale: { id: saleId } },
+      order: { paidAt: 'ASC' },
+    });
+  }
+
+  async addPayment(
+    saleId: string,
+    dto: AddPaymentDto,
+  ): Promise<{ payment: SalePayment; sale: Pick<Sale, 'paidAmount' | 'paymentStatus'> & { remainingAmount: number } }> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+
+    const saleRepo = this.getSaleRepo();
+    const sale = await saleRepo.findOne({
+      where: { id: saleId, tenant: { id: tenantId } },
+    });
+
+    if (!sale) {
+      throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+    }
+
+    const payment = this.getSalePaymentRepo().create({
+      sale: { id: saleId } as any,
+      amount: dto.amount,
+      paymentMethod: dto.paymentMethod,
+      note: dto.note,
+      paidAt: dto.paidAt ? new Date(dto.paidAt) : new Date(),
+      status: SalePaymentStatus.ACTIVE,
+      createdById: userId,
+      updatedById: userId,
+    });
+
+    await this.getSalePaymentRepo().save(payment);
+
+    sale.paidAmount = await this.recalcPaidAmount(saleId);
+    sale.paymentStatus = this.computePaymentStatus(sale.paidAmount, Number(sale.lineTotal || 0));
+    sale.updatedById = userId;
+    await saleRepo.save(sale);
+
+    return {
+      payment,
+      sale: {
+        paidAmount: sale.paidAmount,
+        paymentStatus: sale.paymentStatus,
+        remainingAmount: sale.remainingAmount,
+      },
+    };
+  }
+
+  async updatePayment(
+    saleId: string,
+    paymentId: string,
+    dto: UpdatePaymentDto,
+  ): Promise<{ payment: SalePayment; sale: Pick<Sale, 'paidAmount' | 'paymentStatus'> & { remainingAmount: number } }> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+
+    const saleRepo = this.getSaleRepo();
+    const sale = await saleRepo.findOne({
+      where: { id: saleId, tenant: { id: tenantId } },
+    });
+
+    if (!sale) {
+      throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+    }
+
+    const old = await this.getSalePaymentRepo().findOne({
+      where: {
+        id: paymentId,
+        sale: { id: saleId },
+        status: SalePaymentStatus.ACTIVE,
+      },
+    });
+
+    if (!old) {
+      throw new NotFoundException(SalesErrors.PAYMENT_NOT_FOUND);
+    }
+
+    // Eski kaydı iptal et
+    old.status = SalePaymentStatus.CANCELLED;
+    old.cancelledAt = new Date();
+    old.cancelledById = userId;
+    old.updatedById = userId;
+    await this.getSalePaymentRepo().save(old);
+
+    // Güncel değerlerle yeni kayıt aç
+    const updated = this.getSalePaymentRepo().create({
+      sale: { id: saleId } as any,
+      amount: dto.amount ?? Number(old.amount),
+      paymentMethod: dto.paymentMethod ?? old.paymentMethod,
+      note: dto.note !== undefined ? dto.note : old.note,
+      paidAt: dto.paidAt ? new Date(dto.paidAt) : old.paidAt,
+      status: SalePaymentStatus.UPDATED,
+      createdById: userId,
+      updatedById: userId,
+    });
+
+    await this.getSalePaymentRepo().save(updated);
+
+    sale.paidAmount = await this.recalcPaidAmount(saleId);
+    sale.paymentStatus = this.computePaymentStatus(sale.paidAmount, Number(sale.lineTotal || 0));
+    sale.updatedById = userId;
+    await saleRepo.save(sale);
+
+    return {
+      payment: updated,
+      sale: {
+        paidAmount: sale.paidAmount,
+        paymentStatus: sale.paymentStatus,
+        remainingAmount: sale.remainingAmount,
+      },
+    };
+  }
+
+  async deletePayment(saleId: string, paymentId: string): Promise<void> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const userId = this.appContext.getUserIdOrThrow();
+
+    const saleRepo = this.getSaleRepo();
+    const sale = await saleRepo.findOne({
+      where: { id: saleId, tenant: { id: tenantId } },
+    });
+
+    if (!sale) {
+      throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+    }
+
+    const payment = await this.getSalePaymentRepo().findOne({
+      where: {
+        id: paymentId,
+        sale: { id: saleId },
+        status: SalePaymentStatus.ACTIVE,
+      },
+    });
+
+    if (!payment) {
+      throw new NotFoundException(SalesErrors.PAYMENT_NOT_FOUND);
+    }
+
+    // Hard-delete yerine soft-cancel
+    payment.status = SalePaymentStatus.CANCELLED;
+    payment.cancelledAt = new Date();
+    payment.cancelledById = userId;
+    payment.updatedById = userId;
+    await this.getSalePaymentRepo().save(payment);
+
+    sale.paidAmount = await this.recalcPaidAmount(saleId);
+    sale.paymentStatus = this.computePaymentStatus(sale.paidAmount, Number(sale.lineTotal || 0));
+    sale.updatedById = userId;
+    await saleRepo.save(sale);
   }
 }

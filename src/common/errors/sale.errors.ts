@@ -15,4 +15,8 @@ export const SalesErrors = {
     code: 'SALE_MUST_HAVE_LINES',
     message: 'Satış fişinde en az bir satır bulunmalıdır.',
   },
+  PAYMENT_NOT_FOUND: {
+    code: 'PAYMENT_NOT_FOUND',
+    message: 'Ödeme kaydı bulunamadı.',
+  },
 };

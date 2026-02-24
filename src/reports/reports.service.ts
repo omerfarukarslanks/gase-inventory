@@ -554,6 +554,7 @@ export class ReportsService {
     const buildFilteredQb = () => {
       const qb = this.getSaleRepo(manager)
         .createQueryBuilder('sale')
+        .leftJoin('sale.customer', 'customer')
         .where('sale.tenantId = :tenantId', { tenantId })
         .andWhere('sale.status = :status', { status });
 
@@ -566,11 +567,13 @@ export class ReportsService {
       }
 
       if (query.name?.trim()) {
-        qb.andWhere('sale.name ILIKE :name', { name: `%${query.name.trim()}%` });
+        qb.andWhere('customer.name ILIKE :name', {
+          name: `%${query.name.trim()}%`,
+        });
       }
 
       if (query.surname?.trim()) {
-        qb.andWhere('sale.surname ILIKE :surname', {
+        qb.andWhere('customer.surname ILIKE :surname', {
           surname: `%${query.surname.trim()}%`,
         });
       }
@@ -1543,12 +1546,14 @@ export class ReportsService {
     const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
       .leftJoin('sale.store', 'store')
+      .leftJoin('sale.customer', 'customer')
       .select('sale.id', 'id')
       .addSelect('sale.receiptNo', 'receiptNo')
-      .addSelect('sale.name', 'name')
-      .addSelect('sale.surname', 'surname')
-      .addSelect('sale.phoneNumber', 'phoneNumber')
-      .addSelect('sale.email', 'email')
+      .addSelect('sale."customerId"', 'customerId')
+      .addSelect('customer.name', 'name')
+      .addSelect('customer.surname', 'surname')
+      .addSelect('customer."phoneNumber"', 'phoneNumber')
+      .addSelect('customer.email', 'email')
       .addSelect('sale.meta', 'meta')
       .addSelect('sale.unitPrice', 'unitPrice')
       .addSelect('sale.lineTotal', 'lineTotal')
@@ -1575,18 +1580,18 @@ export class ReportsService {
     }
 
     if (query.name?.trim()) {
-      qb.andWhere('sale.name ILIKE :name', { name: `%${query.name.trim()}%` });
+      qb.andWhere('customer.name ILIKE :name', { name: `%${query.name.trim()}%` });
     }
 
     if (query.surname?.trim()) {
-      qb.andWhere('sale.surname ILIKE :surname', {
+      qb.andWhere('customer.surname ILIKE :surname', {
         surname: `%${query.surname.trim()}%`,
       });
     }
 
     if (search) {
       qb.andWhere(
-        '(sale.receiptNo ILIKE :search OR sale.name ILIKE :search OR sale.surname ILIKE :search OR store.name ILIKE :search)',
+        '(sale.receiptNo ILIKE :search OR customer.name ILIKE :search OR customer.surname ILIKE :search OR store.name ILIKE :search)',
         { search: `%${search}%` },
       );
     }
@@ -1612,6 +1617,7 @@ export class ReportsService {
     const rows = await qb.getRawMany<{
       id: string;
       receiptNo: string | null;
+      customerId: string | null;
       name: string | null;
       surname: string | null;
       phoneNumber: string | null;
@@ -1631,6 +1637,7 @@ export class ReportsService {
       return {
         id: row.id,
         receiptNo: row.receiptNo,
+        customerId: row.customerId,
         name: row.name,
         surname: row.surname,
         phoneNumber: row.phoneNumber,
@@ -2542,10 +2549,12 @@ export class ReportsService {
 
     const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
-      .select('sale."phoneNumber"', 'phoneNumber')
-      .addSelect('MAX(sale.name)', 'name')
-      .addSelect('MAX(sale.surname)', 'surname')
-      .addSelect('MAX(sale.email)', 'email')
+      .innerJoin('sale.customer', 'customer')
+      .select('customer.id', 'customerId')
+      .addSelect('customer."phoneNumber"', 'phoneNumber')
+      .addSelect('customer.name', 'name')
+      .addSelect('customer.surname', 'surname')
+      .addSelect('customer.email', 'email')
       .addSelect('COUNT(sale.id)', 'totalOrders')
       .addSelect(
         'COALESCE(SUM(CASE WHEN sale.status = :confirmedStatus THEN 1 ELSE 0 END), 0)',
@@ -2562,13 +2571,15 @@ export class ReportsService {
       .addSelect('MIN(sale."createdAt")', 'firstPurchase')
       .addSelect('MAX(sale."createdAt")', 'lastPurchase')
       .where('sale.tenantId = :tenantId', { tenantId })
-      .andWhere('sale."phoneNumber" IS NOT NULL')
-      .andWhere("sale.\"phoneNumber\" != ''")
       .setParameters({
         confirmedStatus: SaleStatus.CONFIRMED,
         cancelledStatus: SaleStatus.CANCELLED,
       })
-      .groupBy('sale."phoneNumber"')
+      .groupBy('customer.id')
+      .addGroupBy('customer."phoneNumber"')
+      .addGroupBy('customer.name')
+      .addGroupBy('customer.surname')
+      .addGroupBy('customer.email')
       .orderBy('"totalSpent"', 'DESC');
 
     if (scope.storeIds?.length) {
@@ -2579,7 +2590,7 @@ export class ReportsService {
 
     if (search) {
       qb.andWhere(
-        '(sale.name ILIKE :search OR sale.surname ILIKE :search OR sale."phoneNumber" ILIKE :search OR sale.email ILIKE :search)',
+        '(customer.name ILIKE :search OR customer.surname ILIKE :search OR customer."phoneNumber" ILIKE :search OR customer.email ILIKE :search)',
         { search: `%${search}%` },
       );
     }
@@ -2594,6 +2605,7 @@ export class ReportsService {
 
       return {
         rank: idx + 1,
+        customerId: row.customerId,
         phoneNumber: row.phoneNumber,
         name: row.name,
         surname: row.surname,
@@ -2766,54 +2778,36 @@ export class ReportsService {
     const scope = await this.resolveScopedStoreIds(query.storeIds, manager);
     const pagination = this.resolvePagination(query.page, query.limit);
 
-    if (!query.phoneNumber && !query.email) {
-      throw new BadRequestException('phoneNumber veya email parametrelerinden en az biri zorunludur.');
+    if (!query.customerId && !query.phoneNumber && !query.email) {
+      throw new BadRequestException(
+        'customerId, phoneNumber veya email parametrelerinden en az biri zorunludur.',
+      );
     }
 
-    const qb = this.getSaleRepo(manager)
-      .createQueryBuilder('sale')
-      .leftJoin('sale.store', 'store')
-      .leftJoin('sale.lines', 'line')
-      .leftJoin('line.productVariant', 'variant')
-      .leftJoin('variant.product', 'product')
-      .select('sale.id', 'saleId')
-      .addSelect('sale.receiptNo', 'receiptNo')
-      .addSelect('sale.status', 'status')
-      .addSelect('sale."lineTotal"', 'lineTotal')
-      .addSelect('sale."createdAt"', 'createdAt')
-      .addSelect('store.id', 'storeId')
-      .addSelect('store.name', 'storeName')
-      .where('sale.tenantId = :tenantId', { tenantId })
-      .orderBy('sale."createdAt"', 'DESC');
-
-    if (query.phoneNumber) {
-      qb.andWhere('sale."phoneNumber" = :phone', { phone: query.phoneNumber });
-    }
-
-    if (query.email) {
-      qb.andWhere('sale.email = :email', { email: query.email });
-    }
-
-    if (scope.storeIds?.length) {
-      qb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
-    }
-
-    // Basit sale listesi
     const salesQb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
       .leftJoinAndSelect('sale.store', 'store')
+      .leftJoinAndSelect('sale.customer', 'customer')
       .leftJoinAndSelect('sale.lines', 'line')
       .leftJoinAndSelect('line.productVariant', 'variant')
       .leftJoinAndSelect('variant.product', 'product')
       .where('sale.tenantId = :tenantId', { tenantId })
       .orderBy('sale."createdAt"', 'DESC');
 
+    if (query.customerId) {
+      salesQb.andWhere('sale."customerId" = :customerId', {
+        customerId: query.customerId,
+      });
+    }
+
     if (query.phoneNumber) {
-      salesQb.andWhere('sale."phoneNumber" = :phone', { phone: query.phoneNumber });
+      salesQb.andWhere('customer."phoneNumber" = :phone', {
+        phone: query.phoneNumber,
+      });
     }
 
     if (query.email) {
-      salesQb.andWhere('sale.email = :email', { email: query.email });
+      salesQb.andWhere('customer.email = :email', { email: query.email });
     }
 
     if (scope.storeIds?.length) {
@@ -2847,6 +2841,7 @@ export class ReportsService {
 
     // Ozet
     const confirmedSales = sales.filter((s) => s.status === SaleStatus.CONFIRMED);
+    const customer = sales.find((sale) => sale.customer)?.customer ?? null;
     const summary = {
       totalOrders: total,
       totalSpent: confirmedSales.reduce((s, sale) => s + this.toNumber(sale.lineTotal), 0),
@@ -2858,7 +2853,21 @@ export class ReportsService {
 
     return {
       scope: { mode: scope.mode, storeIds: scope.storeIds },
-      customer: { phoneNumber: query.phoneNumber ?? null, email: query.email ?? null },
+      customer: customer
+        ? {
+            id: customer.id,
+            name: customer.name ?? null,
+            surname: customer.surname ?? null,
+            phoneNumber: customer.phoneNumber ?? null,
+            email: customer.email ?? null,
+          }
+        : {
+            id: query.customerId ?? null,
+            name: null,
+            surname: null,
+            phoneNumber: query.phoneNumber ?? null,
+            email: query.email ?? null,
+          },
       summary,
       data,
       ...(pagination.hasPagination
@@ -2877,15 +2886,22 @@ export class ReportsService {
 
     const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
-      .select('sale."phoneNumber"', 'phoneNumber')
+      .innerJoin('sale.customer', 'customer')
+      .select('customer.id', 'customerId')
+      .addSelect('customer.name', 'name')
+      .addSelect('customer.surname', 'surname')
+      .addSelect('customer."phoneNumber"', 'phoneNumber')
+      .addSelect('customer.email', 'email')
       .addSelect('COUNT(sale.id)', 'orderCount')
       .addSelect('COALESCE(SUM(CASE WHEN sale.status = :confirmedStatus THEN sale."lineTotal" ELSE 0 END), 0)', 'totalSpent')
       .addSelect('MAX(sale."createdAt")', 'lastPurchase')
       .where('sale.tenantId = :tenantId', { tenantId })
-      .andWhere('sale."phoneNumber" IS NOT NULL')
-      .andWhere("sale.\"phoneNumber\" != ''")
       .setParameters({ confirmedStatus: SaleStatus.CONFIRMED })
-      .groupBy('sale."phoneNumber"');
+      .groupBy('customer.id')
+      .addGroupBy('customer.name')
+      .addGroupBy('customer.surname')
+      .addGroupBy('customer."phoneNumber"')
+      .addGroupBy('customer.email');
 
     if (scope.storeIds?.length) {
       qb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
@@ -2931,7 +2947,11 @@ export class ReportsService {
       }
 
       return {
+        customerId: row.customerId,
+        name: row.name,
+        surname: row.surname,
         phoneNumber: row.phoneNumber,
+        email: row.email,
         orderCount,
         totalSpent,
         lastPurchase: lastPurchase.toISOString(),
@@ -3706,6 +3726,7 @@ export class ReportsService {
     const qb = this.getSaleRepo(manager)
       .createQueryBuilder('sale')
       .leftJoinAndSelect('sale.store', 'store')
+      .leftJoinAndSelect('sale.customer', 'customer')
       .leftJoinAndSelect('sale.lines', 'line')
       .leftJoinAndSelect('line.productVariant', 'variant')
       .leftJoin(User, 'creator', 'creator.id = sale."createdById"')
@@ -3740,10 +3761,11 @@ export class ReportsService {
         cancelledAt: sale.cancelledAt,
         store: sale.store ? { id: sale.store.id, name: sale.store.name } : null,
         customer: {
-          name: sale.name,
-          surname: sale.surname,
-          phoneNumber: sale.phoneNumber,
-          email: sale.email,
+          id: sale.customer?.id ?? sale.customerId ?? null,
+          name: sale.customer?.name ?? null,
+          surname: sale.customer?.surname ?? null,
+          phoneNumber: sale.customer?.phoneNumber ?? null,
+          email: sale.customer?.email ?? null,
         },
         unitPrice: this.toNumber(sale.unitPrice),
         lineTotal: this.toNumber(sale.lineTotal),

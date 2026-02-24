@@ -1,13 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger/dist/decorators/api-property.decorator';
-import { CreateSaleLineDto } from './create-sale-line.dto';
+import { Type } from 'class-transformer';
 import {
-  IsEmail,
   IsNotEmpty,
   IsObject,
   IsOptional,
-  IsString,
   IsUUID,
+  ValidateNested,
 } from 'class-validator';
+import { CreateSaleLineDto } from './create-sale-line.dto';
+import { AddPaymentDto } from './add-payment.dto';
 
 export class CreateSaleDto {
   @ApiPropertyOptional({ description: 'Satış yapılacak mağaza ID (gönderilmezse token/context storeId kullanılır)' })
@@ -15,26 +16,10 @@ export class CreateSaleDto {
   @IsUUID('4', { message: 'storeId geçerli bir UUID olmalıdır' })
   storeId?: string;
 
-  @ApiProperty({ description: 'Müşteri adı', example: 'Ahmet' })
-  @IsString({ message: 'name metni olmalıdır' })
-  @IsNotEmpty({ message: 'name boş olamaz' })
-  name: string;
-
-  @ApiProperty({ description: 'Müşteri soyadı', example: 'Yılmaz' })
-  @IsString({ message: 'surname metni olmalıdır' })
-  @IsNotEmpty({ message: 'surname boş olamaz' })
-  surname: string;
-
-  @ApiPropertyOptional({ description: 'Müşteri telefon numarası', example: '+905301234567' })
+  @ApiPropertyOptional({ description: 'Müşteri ID', example: '08443723-dd00-49d2-969b-c27e579178dc' })
   @IsOptional()
-  @IsString({ message: 'phoneNumber metni olmalıdır' })
-  phoneNumber?: string;
-
-  @ApiPropertyOptional({ description: 'Müşteri e-posta adresi', example: 'ahmet.yilmaz@example.com' })
-  @IsOptional()
-  @IsString({ message: 'email metni olmalıdır' })
-  @IsEmail({}, { message: 'email geçerli bir e-posta olmalıdır' })
-  email?: string;
+  @IsUUID('4', { message: 'customerId geçerli bir UUID olmalıdır' })
+  customerId?: string;
 
   @ApiPropertyOptional({
     description: 'Dinamik satış meta bilgileri',
@@ -50,4 +35,15 @@ export class CreateSaleDto {
   })
   @IsNotEmpty({ message: 'lines boş olamaz' })
   lines: CreateSaleLineDto[];
+
+  @ApiPropertyOptional({
+    type: AddPaymentDto,
+    description:
+      'Fiş oluşturulurken aynı anda ödeme kaydı açmak için (opsiyonel). ' +
+      'Gönderilmezse fiş UNPAID olarak açılır.',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AddPaymentDto)
+  initialPayment?: AddPaymentDto;
 }

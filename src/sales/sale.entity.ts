@@ -1,4 +1,5 @@
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
+import { Customer } from 'src/customer/customer.entity';
 import { Store } from 'src/store/store.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
 import {
@@ -7,13 +8,21 @@ import {
   Index,
   ManyToOne,
   OneToMany,
+  RelationId,
 } from 'typeorm';
 import { SaleLine } from './sale-line.entity';
+import { SalePayment } from './sale-payment.entity';
 
 export enum SaleStatus {
   DRAFT = 'DRAFT',
   CONFIRMED = 'CONFIRMED',
   CANCELLED = 'CANCELLED',
+}
+
+export enum PaymentStatus {
+  UNPAID = 'UNPAID',
+  PARTIAL = 'PARTIAL',
+  PAID = 'PAID',
 }
 
 @Entity({ name: 'sales' })
@@ -35,18 +44,11 @@ export class Sale extends AuditableEntity {
   @Column({ type: 'varchar', length: 3, nullable: true })
   currency?: string | null;
 
-  // Müşteri bilgileri (çok basit)
-  @Column({ nullable: true })
-  name?: string;
+  @ManyToOne(() => Customer, { nullable: true, eager: false, onDelete: 'SET NULL' })
+  customer?: Customer | null;
 
-  @Column({ nullable: true })
-  surname?: string;
-
-  @Column({ nullable: true })
-  phoneNumber?: string;
-
-  @Column({ nullable: true })
-  email?: string;
+  @RelationId((sale: Sale) => sale.customer)
+  customerId?: string | null;
 
   @Column({ type: 'jsonb', nullable: true })
   meta?: Record<string, any>;
@@ -58,10 +60,23 @@ export class Sale extends AuditableEntity {
   @Column({ type: 'numeric', default: 0 })
   lineTotal: number;
 
+  // Ödeme takibi
+  @Column({ type: 'numeric', default: 0 })
+  paidAmount: number;
+
+  @Column({ type: 'enum', enum: PaymentStatus, default: PaymentStatus.UNPAID })
+  paymentStatus: PaymentStatus;
+
+  get remainingAmount(): number {
+    return Math.max(0, Number(this.lineTotal || 0) - Number(this.paidAmount || 0));
+  }
+
   @OneToMany(() => SaleLine, (line) => line.sale, { cascade: true })
   lines: SaleLine[];
 
-  
+  @OneToMany(() => SalePayment, (payment) => payment.sale)
+  payments: SalePayment[];
+
   @Column({ type: 'timestamp', nullable: true })
   cancelledAt?: Date | null;
 

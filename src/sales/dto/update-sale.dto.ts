@@ -3,44 +3,22 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
-  IsEmail,
-  IsNotEmpty,
   IsObject,
   IsOptional,
-  IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { UpdateSaleLineDto } from './update-sale-line.dto';
 
 export class UpdateSaleDto {
-  @ApiPropertyOptional({ description: 'Musteri adi', example: 'Ahmet' })
-  @IsOptional()
-  @IsString({ message: 'name metni olmalidir' })
-  @IsNotEmpty({ message: 'name bos olamaz' })
-  name?: string;
-
-  @ApiPropertyOptional({ description: 'Musteri soyadi', example: 'Yilmaz' })
-  @IsOptional()
-  @IsString({ message: 'surname metni olmalidir' })
-  @IsNotEmpty({ message: 'surname bos olamaz' })
-  surname?: string;
-
   @ApiPropertyOptional({
-    description: 'Musteri telefon numarasi',
-    example: '+905301234567',
+    description: 'Musteri ID (null gonderilirse iliski kaldirilir)',
+    example: '08443723-dd00-49d2-969b-c27e579178dc',
+    nullable: true,
   })
   @IsOptional()
-  @IsString({ message: 'phoneNumber metni olmalidir' })
-  phoneNumber?: string;
-
-  @ApiPropertyOptional({
-    description: 'Musteri e-posta adresi',
-    example: 'ahmet.yilmaz@example.com',
-  })
-  @IsOptional()
-  @IsString({ message: 'email metni olmalidir' })
-  @IsEmail({}, { message: 'email gecerli bir e-posta olmalidir' })
-  email?: string;
+  @IsUUID('4', { message: 'customerId gecerli bir UUID olmalidir' })
+  customerId?: string | null;
 
   @ApiPropertyOptional({
     description: 'Dinamik satis meta bilgileri',

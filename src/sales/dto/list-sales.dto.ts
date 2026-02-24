@@ -84,6 +84,14 @@ export class ListSalesForStoreQueryDto {
   @IsString()
   surname?: string;
 
+  @ApiPropertyOptional({
+    description: 'Müşteri ID filtresi',
+    example: '08443723-dd00-49d2-969b-c27e579178dc',
+  })
+  @IsOptional()
+  @IsUUID('4')
+  customerId?: string;
+
   @ApiPropertyOptional({ description: 'Satış durum filtresi', enum: SaleStatus })
   @IsOptional()
   @IsEnum(SaleStatus)
