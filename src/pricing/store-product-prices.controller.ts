@@ -7,6 +7,7 @@ import {
   Put,
   Delete,
   Body,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
@@ -112,6 +113,31 @@ export class StoreProductPricesController {
     });
 
     return result;
+  }
+
+  @Put('product/:productId')
+  @ApiOperation({
+    summary: 'Ürünün tüm varyantlarına mağaza bazlı fiyat uygula (context storeId > storeIds > applyToAllStores)',
+  })
+  async setStorePriceForProduct(
+    @Param('productId', ParseUUIDPipe) productId: string,
+    @Body() dto: SetStorePriceDto,
+  ) {
+    const contextStoreId = this.appContext.getStoreId();
+    return this.priceService.setStorePriceForProduct({
+      productId,
+      storeId: contextStoreId ?? dto.storeId,
+      storeIds: dto.storeIds,
+      applyToAllStores: dto.applyToAllStores,
+      unitPrice: dto.unitPrice,
+      currency: dto.currency,
+      discountPercent: dto.discountPercent,
+      discountAmount: dto.discountAmount,
+      taxPercent: dto.taxPercent,
+      taxAmount: dto.taxAmount,
+      lineTotal: dto.lineTotal,
+      campaignCode: dto.campaignCode,
+    });
   }
 
   @Delete(':storeId/:variantId')

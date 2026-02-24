@@ -6,10 +6,11 @@ import { PriceService } from './price.service';
 import { AppContextService } from '../common/context/app-context.service';
 import { StoreProductPricesController } from './store-product-prices.controller';
 import { Store } from 'src/store/store.entity';
+import { Product } from 'src/product/product.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([StoreProductPrice, ProductVariant, Store]),
+    TypeOrmModule.forFeature([StoreProductPrice, ProductVariant, Store, Product]),
   ],
   controllers: [StoreProductPricesController],
   providers: [PriceService, AppContextService],

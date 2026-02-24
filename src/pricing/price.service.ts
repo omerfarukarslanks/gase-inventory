@@ -8,6 +8,7 @@ import { AppContextService } from '../common/context/app-context.service';
 import { ProductErrors } from '../common/errors/product.errors';
 import { Store } from 'src/store/store.entity';
 import { StoreErrors } from 'src/common/errors/store.errors';
+import { Product } from 'src/product/product.entity';
 
 export interface EffectivePriceParams {
   unitPrice: number | null;
@@ -27,6 +28,8 @@ export class PriceService {
     private readonly sppRepo: Repository<StoreProductPrice>,
     @InjectRepository(ProductVariant)
     private readonly variantRepo: Repository<ProductVariant>,
+    @InjectRepository(Product)
+    private readonly productRepo: Repository<Product>,
     @InjectRepository(Store)
     private readonly storeRepo: Repository<Store>,
     private readonly appContext: AppContextService,
@@ -42,6 +45,10 @@ export class PriceService {
 
   private getStoreRepo(manager?: EntityManager): Repository<Store> {
     return manager ? manager.getRepository(Store) : this.storeRepo;
+  }
+
+  private getProductRepo(manager?: EntityManager): Repository<Product> {
+    return manager ? manager.getRepository(Product) : this.productRepo;
   }
 
   private getTenantIdOrThrow() {
@@ -384,6 +391,120 @@ export class PriceService {
     return {
       appliedStoreIds: targetStoreIds,
       items,
+    };
+  }
+
+  /**
+   * Bir ürünün tüm varyantlarına seçilen mağaza(lar)da aynı fiyat bilgilerini uygular.
+   * Mağaza önceliği: contextStoreId → storeIds → applyToAllStores
+   */
+  async setStorePriceForProduct(params: {
+    productId: string;
+    storeId?: string;
+    storeIds?: string[];
+    applyToAllStores?: boolean;
+    unitPrice?: number | null;
+    currency?: string;
+    discountPercent?: number | null;
+    discountAmount?: number | null;
+    taxPercent?: number | null;
+    taxAmount?: number | null;
+    lineTotal?: number | null;
+    campaignCode?: string | null;
+  }): Promise<{
+    productId: string;
+    variantCount: number;
+    appliedStoreIds: string[];
+    items: StoreProductPrice[];
+  }> {
+    const tenantId = this.getTenantIdOrThrow();
+
+    const variants = await this.variantRepo.find({
+      where: { product: { id: params.productId, tenant: { id: tenantId } } },
+      relations: ['product', 'product.tenant'],
+      select: { id: true, product: { id: true, tenant: { id: true } } },
+    });
+
+    if (variants.length === 0) {
+      throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
+    }
+
+    const targetStoreIds = await this.resolveTargetStoreIds({
+      storeId: params.storeId,
+      storeIds: params.storeIds,
+      applyToAllStores: params.applyToAllStores,
+    });
+
+    const allItems: StoreProductPrice[] = [];
+
+    await this.sppRepo.manager.transaction(async (txManager) => {
+      const productDefaultsToUpdate: Partial<Product> = {};
+
+      if (params.unitPrice !== undefined) {
+        productDefaultsToUpdate.defaultSalePrice = params.unitPrice;
+      }
+      if (params.currency !== undefined) {
+        productDefaultsToUpdate.defaultCurrency = params.currency;
+      }
+      if (params.discountPercent !== undefined) {
+        productDefaultsToUpdate.defaultDiscountPercent = params.discountPercent;
+      }
+      if (params.discountAmount !== undefined) {
+        productDefaultsToUpdate.defaultDiscountAmount = params.discountAmount;
+      }
+      if (params.taxPercent !== undefined) {
+        productDefaultsToUpdate.defaultTaxPercent = params.taxPercent;
+      }
+      if (params.taxAmount !== undefined) {
+        productDefaultsToUpdate.defaultTaxAmount = params.taxAmount;
+      }
+      if (params.lineTotal !== undefined) {
+        productDefaultsToUpdate.defaultLineTotal = params.lineTotal;
+      }
+
+      if (Object.keys(productDefaultsToUpdate).length > 0) {
+        const productRepo = this.getProductRepo(txManager);
+        const product = await productRepo.findOne({
+          where: {
+            id: params.productId,
+            tenant: { id: tenantId },
+          },
+        });
+
+        if (!product) {
+          throw new NotFoundException(ProductErrors.PRODUCT_NOT_FOUND);
+        }
+
+        Object.assign(product, productDefaultsToUpdate);
+        product.updatedById = this.getUserIdOrThrow();
+        await productRepo.save(product);
+      }
+
+      for (const variant of variants) {
+        for (const storeId of targetStoreIds) {
+          const row = await this.setStorePriceForVariant({
+            storeId,
+            productVariantId: variant.id,
+            unitPrice: params.unitPrice,
+            currency: params.currency,
+            discountPercent: params.discountPercent,
+            discountAmount: params.discountAmount,
+            taxPercent: params.taxPercent,
+            taxAmount: params.taxAmount,
+            lineTotal: params.lineTotal,
+            campaignCode: params.campaignCode,
+            manager: txManager,
+          });
+          allItems.push(row);
+        }
+      }
+    });
+
+    return {
+      productId: params.productId,
+      variantCount: variants.length,
+      appliedStoreIds: targetStoreIds,
+      items: allItems,
     };
   }
 

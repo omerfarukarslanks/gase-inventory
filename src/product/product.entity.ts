@@ -36,25 +36,25 @@ export class Product extends AuditableEntity {
   defaultCurrency: string;
 
   @Column({ type: 'numeric', nullable: true })
-  defaultSalePrice?: number; // KDV hariç veya dahil – projede nasıl karar verirsek
+  defaultSalePrice?: number | null; // KDV hariç veya dahil – projede nasıl karar verirsek
 
   @Column({ type: 'numeric', nullable: true })
-  defaultPurchasePrice?: number; // tedarik alış fiyatı (opsiyonel)
+  defaultPurchasePrice?: number | null; // tedarik alış fiyatı (opsiyonel)
 
   @Column({ type: 'numeric', nullable: true })
-  defaultTaxPercent?: number; // ör: 20 => %20 KDV
+  defaultTaxPercent?: number | null; // ör: 20 => %20 KDV
 
   @Column({ type: 'numeric', nullable: true })
-  defaultDiscountPercent?: number;
+  defaultDiscountPercent?: number | null;
 
   @Column({ type: 'numeric', nullable: true })
-  defaultDiscountAmount?: number;
+  defaultDiscountAmount?: number | null;
 
   @Column({ type: 'numeric', nullable: true })
-  defaultTaxAmount?: number;
+  defaultTaxAmount?: number | null;
 
   @Column({ type: 'numeric', nullable: true })
-  defaultLineTotal?: number;
+  defaultLineTotal?: number | null;
 
   /* @Column({ nullable: true })
   additionalImages?: string[]; */
