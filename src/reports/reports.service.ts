@@ -22,8 +22,6 @@ import { ReorderQueryDto } from './dto/reorder-query.dto';
 import { WeekComparisonQueryDto } from './dto/week-comparison-query.dto';
 import { InventoryMovement } from 'src/inventory/inventory-movement.entity';
 import { User } from 'src/user/user.entity';
-import { StockTransfer } from 'src/transfer/stock-transfer.entity';
-import { StockTransferLine } from 'src/transfer/stock-transfer-line.entity';
 
 type ResolvedScope = {
   mode: 'context-store' | 'query-stores' | 'tenant';
@@ -51,10 +49,6 @@ export class ReportsService {
     private readonly movementRepo: Repository<InventoryMovement>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
-    @InjectRepository(StockTransfer)
-    private readonly transferRepo: Repository<StockTransfer>,
-    @InjectRepository(StockTransferLine)
-    private readonly transferLineRepo: Repository<StockTransferLine>,
     private readonly appContext: AppContextService,
   ) {}
 
@@ -3626,95 +3620,6 @@ export class ReportsService {
   }
 
   // =========================================================================
-  // TR-1: Mağazalar Arası Transfer Analizi
-  // =========================================================================
-  async getTransferAnalysisReport(query: ReportScopeQueryDto, manager?: EntityManager) {
-    const tenantId = this.appContext.getTenantIdOrThrow();
-    const scope = await this.resolveScopedStoreIds(query.storeIds, manager);
-    const { start, end } = this.resolveDateRange(query.startDate, query.endDate);
-    const pagination = this.resolvePagination(query.page, query.limit);
-
-    const repo = manager ? manager.getRepository(StockTransfer) : this.transferRepo;
-
-    const qb = repo
-      .createQueryBuilder('t')
-      .innerJoin('t.tenant', 'tenant')
-      .innerJoin('t.fromStore', 'fromStore')
-      .innerJoin('t.toStore', 'toStore')
-      .leftJoinAndSelect('t.lines', 'line')
-      .leftJoin('line.productVariant', 'variant')
-      .where('tenant.id = :tenantId', { tenantId })
-      .orderBy('t."createdAt"', 'DESC');
-
-    if (scope.storeIds?.length) {
-      qb.andWhere(
-        '(t."fromStoreId" IN (:...storeIds) OR t."toStoreId" IN (:...storeIds))',
-        { storeIds: scope.storeIds },
-      );
-    }
-
-    if (start) {
-      qb.andWhere('t."createdAt" >= :start', { start });
-    }
-    if (end) {
-      qb.andWhere('t."createdAt" <= :end', { end });
-    }
-
-    const total = await qb.getCount();
-    if (pagination.hasPagination) {
-      qb.skip(pagination.skip).take(pagination.limit);
-    }
-
-    const transfers = await qb.getMany();
-
-    // Magaza bazli toplam
-    const storeFlowMap = new Map<string, { sent: number; received: number; storeName: string }>();
-
-    const data = transfers.map((t) => {
-      const totalQty = (t.lines ?? []).reduce((s, l) => s + this.toNumber(l.quantity), 0);
-
-      // Gonderici
-      const fromKey = t.fromStore.id;
-      if (!storeFlowMap.has(fromKey)) storeFlowMap.set(fromKey, { sent: 0, received: 0, storeName: t.fromStore.name });
-      storeFlowMap.get(fromKey)!.sent += totalQty;
-
-      // Alici
-      const toKey = t.toStore.id;
-      if (!storeFlowMap.has(toKey)) storeFlowMap.set(toKey, { sent: 0, received: 0, storeName: t.toStore.name });
-      storeFlowMap.get(toKey)!.received += totalQty;
-
-      return {
-        transferId: t.id,
-        status: t.status,
-        createdAt: t.createdAt,
-        note: t.note,
-        fromStore: { id: t.fromStore.id, name: t.fromStore.name },
-        toStore: { id: t.toStore.id, name: t.toStore.name },
-        totalQuantity: totalQty,
-        lineCount: (t.lines ?? []).length,
-      };
-    });
-
-    const storeFlows = Array.from(storeFlowMap.entries()).map(([storeId, flow]) => ({
-      storeId,
-      storeName: flow.storeName,
-      totalSent: flow.sent,
-      totalReceived: flow.received,
-      netFlow: flow.received - flow.sent,
-    }));
-
-    return {
-      scope: { mode: scope.mode, storeIds: scope.storeIds },
-      period: { startDate: query.startDate ?? null, endDate: query.endDate ?? null },
-      data,
-      storeFlows,
-      ...(pagination.hasPagination
-        ? { meta: { total, limit: pagination.limit, page: pagination.page, totalPages: Math.ceil(total / pagination.limit) } }
-        : {}),
-    };
-  }
-
-  // =========================================================================
   // TAX-2: Satış Denetim Kaydı (Audit Trail)
   // =========================================================================
   async getAuditTrailReport(query: ReportScopeQueryDto, manager?: EntityManager) {
@@ -3974,142 +3879,4 @@ export class ReportsService {
     };
   }
 
-  // =========================================================================
-  // TR-2: Mağaza Stok Dengesi Optimizasyonu
-  // =========================================================================
-  async getTransferBalanceRecommendationReport(query: ReportScopeQueryDto, manager?: EntityManager) {
-    const tenantId = this.appContext.getTenantIdOrThrow();
-    const scope = await this.resolveScopedStoreIds(query.storeIds, manager);
-    const pagination = this.resolvePagination(query.page, query.limit);
-
-    const periodStart = new Date();
-    periodStart.setUTCDate(periodStart.getUTCDate() - 30);
-
-    // Varyant + magaza bazinda stok
-    const stockQb = this.getStockSummaryRepo(manager)
-      .createQueryBuilder('s')
-      .innerJoin('s.productVariant', 'variant')
-      .innerJoin('variant.product', 'product')
-      .innerJoin('s.store', 'store')
-      .select('variant.id', 'productVariantId')
-      .addSelect('variant.name', 'variantName')
-      .addSelect('variant.code', 'variantCode')
-      .addSelect('product.name', 'productName')
-      .addSelect('store.id', 'storeId')
-      .addSelect('store.name', 'storeName')
-      .addSelect('s.quantity', 'stock')
-      .where('s.tenantId = :tenantId', { tenantId })
-      .andWhere('s."isActiveStore" = true');
-
-    if (scope.storeIds?.length) {
-      stockQb.andWhere('s.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
-    }
-
-    const stockRows = await stockQb.getRawMany();
-
-    // Son 30 gun satis (variant + store)
-    const soldQb = this.getSaleLineRepo(manager)
-      .createQueryBuilder('line')
-      .innerJoin('line.sale', 'sale')
-      .select('line.productVariantId', 'variantId')
-      .addSelect('sale.storeId', 'storeId')
-      .addSelect('COALESCE(SUM(line.quantity), 0)', 'soldQuantity')
-      .where('sale.tenantId = :tenantId', { tenantId })
-      .andWhere('sale.status = :status', { status: SaleStatus.CONFIRMED })
-      .andWhere('sale."createdAt" >= :periodStart', { periodStart })
-      .groupBy('line.productVariantId')
-      .addGroupBy('sale.storeId');
-
-    if (scope.storeIds?.length) {
-      soldQb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
-    }
-
-    const soldRows = await soldQb.getRawMany();
-    const soldMap = new Map<string, number>();
-    for (const r of soldRows) {
-      soldMap.set(`${r.variantId}__${r.storeId}`, this.toNumber(r.soldQuantity));
-    }
-
-    // Varyant bazinda gruplama
-    const variantStoreMap = new Map<string, {
-      productName: string;
-      variantName: string;
-      variantCode: string;
-      stores: { storeId: string; storeName: string; stock: number; dailyAvgSales: number; supplyDays: number | null }[];
-    }>();
-
-    for (const row of stockRows) {
-      const vid = row.productVariantId;
-      if (!variantStoreMap.has(vid)) {
-        variantStoreMap.set(vid, {
-          productName: row.productName,
-          variantName: row.variantName,
-          variantCode: row.variantCode,
-          stores: [],
-        });
-      }
-
-      const stock = this.toNumber(row.stock);
-      const sold = soldMap.get(`${vid}__${row.storeId}`) ?? 0;
-      const dailyAvgSales = sold / 30;
-      const supplyDays = dailyAvgSales > 0 ? Math.round(stock / dailyAvgSales) : null;
-
-      variantStoreMap.get(vid)!.stores.push({
-        storeId: row.storeId,
-        storeName: row.storeName,
-        stock,
-        dailyAvgSales: Math.round(dailyAvgSales * 100) / 100,
-        supplyDays,
-      });
-    }
-
-    // Dengesizlik tespit (en az 2 magaza olan varyantlarda)
-    const recommendations: any[] = [];
-
-    for (const [variantId, info] of variantStoreMap.entries()) {
-      if (info.stores.length < 2) continue;
-
-      const supplyDays = info.stores
-        .filter((s) => s.supplyDays !== null)
-        .map((s) => s.supplyDays as number);
-
-      if (supplyDays.length < 2) continue;
-
-      const maxSupply = Math.max(...supplyDays);
-      const minSupply = Math.min(...supplyDays);
-
-      if (maxSupply - minSupply >= 14) {
-        const fromStore = info.stores.find((s) => s.supplyDays === maxSupply)!;
-        const toStore = info.stores.find((s) => s.supplyDays === minSupply)!;
-        const suggestedQty = Math.max(1, Math.floor((fromStore.stock - toStore.stock) / 3));
-
-        recommendations.push({
-          productVariantId: variantId,
-          productName: info.productName,
-          variantName: info.variantName,
-          variantCode: info.variantCode,
-          fromStore: { id: fromStore.storeId, name: fromStore.storeName, stock: fromStore.stock, supplyDays: fromStore.supplyDays },
-          toStore: { id: toStore.storeId, name: toStore.storeName, stock: toStore.stock, supplyDays: toStore.supplyDays },
-          suggestedQuantity: suggestedQty,
-          stores: info.stores,
-        });
-      }
-    }
-
-    recommendations.sort((a, b) => (a.toStore.supplyDays ?? 0) - (b.toStore.supplyDays ?? 0));
-
-    const total = recommendations.length;
-    const data = pagination.hasPagination
-      ? recommendations.slice(pagination.skip, pagination.skip + pagination.limit)
-      : recommendations;
-
-    return {
-      scope: { mode: scope.mode, storeIds: scope.storeIds },
-      data,
-      totalRecommendations: total,
-      ...(pagination.hasPagination
-        ? { meta: { total, limit: pagination.limit, page: pagination.page, totalPages: Math.ceil(total / pagination.limit) } }
-        : {}),
-    };
-  }
 }

@@ -1007,24 +1007,6 @@ export class ToolService {
           return { name: call.name, ok: true, data };
         }
 
-        case 'transfer_analysis_report': {
-          const query = this.buildScopeQuery(args);
-          query.page ??= 1;
-          query.limit ??= this.parsePositiveInt(args.limit, 10, 100);
-          const data = await this.reports.getTransferAnalysisReport(query as any);
-          return { name: call.name, ok: true, data };
-        }
-
-        case 'transfer_balance_recommendation_report': {
-          const query = this.buildScopeQuery(args);
-          query.page ??= 1;
-          query.limit ??= this.parsePositiveInt(args.limit, 10, 100);
-          const data = await this.reports.getTransferBalanceRecommendationReport(
-            query as any,
-          );
-          return { name: call.name, ok: true, data };
-        }
-
         default:
           return {
             name: call.name as any,

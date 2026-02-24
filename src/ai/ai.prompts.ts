@@ -68,12 +68,10 @@ KURALLAR:
 - employee_sales_performance_report
 - employee_hourly_performance_report
 
-[ZAMAN/TRANSFER]
+[ZAMAN]
 - hourly_sales_report
 - seasonality_report
 - week_comparison_report
-- transfer_analysis_report
-- transfer_balance_recommendation_report
 - audit_trail_report
 
 === INTENT ORNEKLERI ===
@@ -150,19 +148,13 @@ KURALLAR:
 - "Personel bazli ciro." -> employee_sales_performance_report
 - "Calisan basina ortalama satis." -> employee_sales_performance_report
 
-6) Transfer / Lojistik
-- "Magazalar arasi transfer analizi yap." -> transfer_analysis_report
-- "Hangi urunler en cok transfer edildi?" -> transfer_analysis_report
-- "Transfer hacmi en yuksek magaza hangisi?" -> transfer_analysis_report
-- "Bu ay toplam transfer adedi." -> transfer_analysis_report
-
-7) Zaman Bazli
+6) Zaman Bazli
 - "Saatlik satis dagilimini getir." -> hourly_sales_report
 - "En yogun satis saati." -> hourly_sales_report
 - "Gunlere gore satis yogunlugu." -> hourly_sales_report
 - "Hafta ici vs hafta sonu satis karsilastirmasi." -> hourly_sales_report
 
-8) Bonus (Karma)
+7) Bonus (Karma)
 - "Bu ay en cok satan ama stogu kritik olan urunleri goster." -> product_performance_ranking_report
 - "Son 30 gun en cok satilan ama kar marji dusuk urunler." -> profit_margin_report
 - "Satisi artan ama stogu azalan urunleri listele." -> low_stock_alerts

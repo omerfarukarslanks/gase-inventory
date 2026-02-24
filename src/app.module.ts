@@ -17,7 +17,6 @@ import { InventoryModule } from './inventory/inventory.module';
 import { SalesModule } from './sales/sales.module';
 import { ReportsModule } from './reports/reports.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
-import { StockTransferModule } from './transfer/stock-transfer.module';
 import { join } from 'path';
 import { PriceModule } from './pricing/price.module';
 import { AttributeModule } from './attribute/attribute.module';
@@ -90,7 +89,6 @@ import { ScheduleModule } from '@nestjs/schedule';
     InventoryModule,
     SalesModule,
     ReportsModule,
-    StockTransferModule,
     PriceModule,
     AttributeModule,
     AiModule,

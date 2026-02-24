@@ -363,23 +363,4 @@ export class ReportsController {
     return this.reportsService.getReorderAnalysisReport(query);
   }
 
-  // ─── TR-1: Transfer Analizi ───
-
-  @Get('transfers/analysis')
-  @ApiOperation({
-    summary: 'Magazalar arasi transfer analizi: transfer detaylari, magaza akis ozeti',
-  })
-  getTransferAnalysis(@Query() query: ReportScopeQueryDto) {
-    return this.reportsService.getTransferAnalysisReport(query);
-  }
-
-  // ─── TR-2: Stok Denge Önerisi ───
-
-  @Get('transfers/balance-recommendation')
-  @ApiOperation({
-    summary: 'Stok dengesi optimizasyonu: dengesizlik tespiti ve transfer onerisi',
-  })
-  getTransferBalanceRecommendation(@Query() query: ReportScopeQueryDto) {
-    return this.reportsService.getTransferBalanceRecommendationReport(query);
-  }
 }

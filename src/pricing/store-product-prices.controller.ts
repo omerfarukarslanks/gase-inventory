@@ -18,7 +18,7 @@ import { AppContextService } from '../common/context/app-context.service';
 import { SetStorePriceDto } from './dto/set-store-price.dto';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 
-@ApiTags('store-prices')
+@ApiTags('Store Prices')
 @UseGuards(JwtAuthGuard)
 @Controller('store-prices')
 export class StoreProductPricesController {

@@ -12,8 +12,6 @@ import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { InventoryMovement } from 'src/inventory/inventory-movement.entity';
 import { User } from 'src/user/user.entity';
-import { StockTransfer } from 'src/transfer/stock-transfer.entity';
-import { StockTransferLine } from 'src/transfer/stock-transfer-line.entity';
 
 @Module({
   imports: [
@@ -28,8 +26,6 @@ import { StockTransferLine } from 'src/transfer/stock-transfer-line.entity';
       ProductVariant,
       InventoryMovement,
       User,
-      StockTransfer,
-      StockTransferLine,
     ]),
   ],
   providers: [ReportsService],

@@ -49,8 +49,6 @@ const TOOL_NAMES = new Set<ToolName>([
   'stock_turnover_report',
   'stock_aging_report',
   'reorder_analysis_report',
-  'transfer_analysis_report',
-  'transfer_balance_recommendation_report',
 ]);
 
 const DATE_RANGE_AWARE_TOOLS = new Set<ToolName>([
@@ -862,24 +860,6 @@ export class AiService {
     }
 
     if (
-      this.includesAny(text, ['transfer denge', 'transfer oneri', 'dengesizlik'])
-    ) {
-      return { name: 'transfer_balance_recommendation_report', args: { page: 1, limit: 10 } };
-    }
-
-    if (
-      this.includesAny(text, [
-        'transfer analiz',
-        'magaza transfer',
-        'magazalar arasi transfer',
-        'en cok transfer',
-        'transfer hacmi',
-      ])
-    ) {
-      return { name: 'transfer_analysis_report', args: { page: 1, limit: 10 } };
-    }
-
-    if (
       this.includesAny(text, [
         'indirim etkisi',
         'kampanya etkisi',
@@ -1397,4 +1377,3 @@ export class AiService {
     return this.buildSingleMessageStream(finalContent);
   }
 }
-

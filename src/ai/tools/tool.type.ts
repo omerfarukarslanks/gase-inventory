@@ -35,9 +35,7 @@ export type ToolName =
   | 'sales_by_discount_band_report'
   | 'stock_turnover_report'
   | 'stock_aging_report'
-  | 'reorder_analysis_report'
-  | 'transfer_analysis_report'
-  | 'transfer_balance_recommendation_report';
+  | 'reorder_analysis_report';
 
 export interface ToolCall {
   name: ToolName;
