@@ -70,6 +70,16 @@ export class ReportsController {
     return this.reportsService.getSalesByProductReport(query);
   }
 
+  // ─── S-1: Tedarikçi Satış Performansı ───
+
+  @Get('suppliers/sales-performance')
+  @ApiOperation({
+    summary: 'Tedarikci bazli satis performansi: adet, ciro, siparis ve urun dagilimi',
+  })
+  getSupplierSalesPerformance(@Query() query: ReportScopeQueryDto) {
+    return this.reportsService.getSupplierSalesPerformanceReport(query);
+  }
+
   @Get('stores/performance')
   @ApiOperation({
     summary: 'Magaza performans karsilastirmasi (context storeId varsa tek store)',

@@ -958,6 +958,172 @@ export class ReportsService {
     };
   }
 
+  async getSupplierSalesPerformanceReport(query: ReportScopeQueryDto, manager?: EntityManager) {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const scope = await this.resolveScopedStoreIds(query.storeIds, manager);
+    const { start, end } = this.resolveDateRange(query.startDate, query.endDate);
+    const pagination = this.resolvePagination(query.page, query.limit);
+    const search = query.search?.trim();
+
+    const netExpr = 'COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)';
+    const discountExpr = `CASE
+      WHEN line."discountAmount" IS NOT NULL THEN line."discountAmount"
+      WHEN line."discountPercent" IS NOT NULL THEN ((${netExpr}) * line."discountPercent" / 100)
+      ELSE 0
+    END`;
+    const taxableExpr = `((${netExpr}) - (${discountExpr}))`;
+    const taxExpr = `CASE
+      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
+      WHEN line."taxPercent" IS NOT NULL THEN ((${taxableExpr}) * line."taxPercent" / 100)
+      ELSE 0
+    END`;
+    const lineTotalExpr = `COALESCE(line."lineTotal", ((${taxableExpr}) + (${taxExpr})))`;
+
+    const qb = this.getSaleLineRepo(manager)
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .innerJoin('line.productVariant', 'variant')
+      .innerJoin('variant.product', 'product')
+      .innerJoin('product.supplier', 'supplier')
+      .select('supplier.id', 'supplierId')
+      .addSelect('supplier.name', 'supplierName')
+      .addSelect('supplier.surname', 'supplierSurname')
+      .addSelect('supplier.phoneNumber', 'supplierPhoneNumber')
+      .addSelect('supplier.email', 'supplierEmail')
+      .addSelect('COUNT(DISTINCT sale.id)', 'saleCount')
+      .addSelect('COUNT(DISTINCT product.id)', 'productCount')
+      .addSelect('COUNT(DISTINCT variant.id)', 'variantCount')
+      .addSelect('COALESCE(SUM(line.quantity), 0)', 'quantity')
+      .addSelect(`COALESCE(SUM(${netExpr}), 0)`, 'totalUnitPrice')
+      .addSelect(`COALESCE(SUM(${discountExpr}), 0)`, 'totalDiscount')
+      .addSelect(`COALESCE(SUM(${taxExpr}), 0)`, 'totalTax')
+      .addSelect(`COALESCE(SUM(${lineTotalExpr}), 0)`, 'lineTotal')
+      .where('sale.tenantId = :tenantId', { tenantId })
+      .andWhere('sale.status = :confirmedStatus', { confirmedStatus: SaleStatus.CONFIRMED })
+      .groupBy('supplier.id')
+      .addGroupBy('supplier.name')
+      .addGroupBy('supplier.surname')
+      .addGroupBy('supplier.phoneNumber')
+      .addGroupBy('supplier.email')
+      .orderBy('"lineTotal"', 'DESC');
+
+    if (scope.storeIds?.length) {
+      qb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
+    }
+
+    if (search) {
+      qb.andWhere(
+        `(
+          supplier.name ILIKE :search
+          OR supplier.surname ILIKE :search
+          OR CONCAT(COALESCE(supplier.name, ''), ' ', COALESCE(supplier.surname, '')) ILIKE :search
+          OR product.name ILIKE :search
+          OR variant.name ILIKE :search
+          OR variant.code ILIKE :search
+        )`,
+        { search: `%${search}%` },
+      );
+    }
+
+    this.applyDateFilter(qb, 'sale', 'createdAt', start, end);
+
+    const rows = await qb.getRawMany<{
+      supplierId: string;
+      supplierName: string;
+      supplierSurname: string | null;
+      supplierPhoneNumber: string | null;
+      supplierEmail: string | null;
+      saleCount: string;
+      productCount: string;
+      variantCount: string;
+      quantity: string;
+      totalUnitPrice: string;
+      totalDiscount: string;
+      totalTax: string;
+      lineTotal: string;
+    }>();
+
+    const mapped = rows.map((row) => {
+      const quantity = this.toNumber(row.quantity);
+      const totalUnitPrice = this.toNumber(row.totalUnitPrice);
+      const totalDiscount = this.toNumber(row.totalDiscount);
+      const totalTax = this.toNumber(row.totalTax);
+      const lineTotal = this.toNumber(row.lineTotal);
+
+      return {
+        supplierId: row.supplierId,
+        supplierName: row.supplierName,
+        supplierSurname: row.supplierSurname,
+        supplierPhoneNumber: row.supplierPhoneNumber,
+        supplierEmail: row.supplierEmail,
+        saleCount: this.toNumber(row.saleCount),
+        productCount: this.toNumber(row.productCount),
+        variantCount: this.toNumber(row.variantCount),
+        quantity,
+        totalUnitPrice,
+        totalDiscount,
+        totalTax,
+        lineTotal,
+        avgUnitPrice: quantity > 0 ? totalUnitPrice / quantity : 0,
+      };
+    });
+
+    const totals = {
+      totalSuppliers: mapped.length,
+      totalSales: mapped.reduce((sum, item) => sum + item.saleCount, 0),
+      totalProducts: mapped.reduce((sum, item) => sum + item.productCount, 0),
+      totalVariants: mapped.reduce((sum, item) => sum + item.variantCount, 0),
+      totalQuantity: mapped.reduce((sum, item) => sum + item.quantity, 0),
+      totalUnitPrice: mapped.reduce((sum, item) => sum + item.totalUnitPrice, 0),
+      totalDiscount: mapped.reduce((sum, item) => sum + item.totalDiscount, 0),
+      totalTax: mapped.reduce((sum, item) => sum + item.totalTax, 0),
+      totalLineTotal: mapped.reduce((sum, item) => sum + item.lineTotal, 0),
+    };
+
+    if (!pagination.hasPagination) {
+      return {
+        scope: {
+          mode: scope.mode,
+          storeIds: scope.storeIds,
+        },
+        period: {
+          startDate: query.startDate ?? null,
+          endDate: query.endDate ?? null,
+        },
+        filters: {
+          search: query.search ?? null,
+        },
+        data: mapped,
+        totals,
+      };
+    }
+
+    const total = mapped.length;
+    const data = mapped.slice(pagination.skip, pagination.skip + pagination.limit);
+
+    return {
+      scope: {
+        mode: scope.mode,
+        storeIds: scope.storeIds,
+      },
+      period: {
+        startDate: query.startDate ?? null,
+        endDate: query.endDate ?? null,
+      },
+      filters: {
+        search: query.search ?? null,
+      },
+      data,
+      totals,
+      meta: {
+        total,
+        limit: pagination.limit,
+        page: pagination.page,
+        totalPages: Math.ceil(total / pagination.limit),
+      },
+    };
+  }
+
   async getStorePerformanceReport(query: ReportScopeQueryDto, manager?: EntityManager) {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const scope = await this.resolveScopedStoreIds(query.storeIds, manager);
