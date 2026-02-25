@@ -8,10 +8,17 @@ import { ProductPackageController } from './product-package.controller';
 import { InventoryModule } from 'src/inventory/inventory.module';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { Product } from 'src/product/product.entity';
+import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ProductPackage, ProductPackageItem, ProductVariant, Product]),
+    TypeOrmModule.forFeature([
+      ProductPackage,
+      ProductPackageItem,
+      ProductVariant,
+      Product,
+      StoreVariantStock,
+    ]),
     InventoryModule,
   ],
   providers: [ProductPackageService],

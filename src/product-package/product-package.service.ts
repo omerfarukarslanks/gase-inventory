@@ -15,6 +15,7 @@ import { UpdatePackageDto } from '../product-package/dto/update-package.dto';
 import { ListPackagesDto } from '../product-package/dto/list-packages.dto';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
+import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 
 @Injectable()
 export class ProductPackageService {
@@ -27,6 +28,8 @@ export class ProductPackageService {
 
     @InjectRepository(ProductVariant)
     private readonly variantRepo: Repository<ProductVariant>,
+    @InjectRepository(StoreVariantStock)
+    private readonly stockSummaryRepo: Repository<StoreVariantStock>,
 
     private readonly appContext: AppContextService,
     private readonly inventoryService: InventoryService,
@@ -109,6 +112,8 @@ export class ProductPackageService {
       .skip(query.skip)
       .take(query.limit)
       .getMany();
+
+    await this.attachVariantStocks(data, tenantId);
 
     return {
       data,
@@ -426,5 +431,63 @@ export class ProductPackageService {
     }
 
     return currencies[0];
+  }
+
+  private async attachVariantStocks(
+    packages: ProductPackage[],
+    tenantId: string,
+  ): Promise<void> {
+    const variantIds = Array.from(
+      new Set(
+        packages
+          .flatMap((pkg) => pkg.items ?? [])
+          .map((item) => item.productVariant?.id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    );
+
+    if (variantIds.length === 0) {
+      return;
+    }
+
+    const contextStoreId = this.appContext.getStoreId();
+    const stockMap = new Map<string, number>();
+
+    if (contextStoreId) {
+      const rows = await this.stockSummaryRepo
+        .createQueryBuilder('s')
+        .select('s.productVariantId', 'variantId')
+        .addSelect('COALESCE(s.quantity, 0)', 'quantity')
+        .where('s.tenantId = :tenantId', { tenantId })
+        .andWhere('s.storeId = :storeId', { storeId: contextStoreId })
+        .andWhere('s."isActiveStore" = true')
+        .andWhere('s.productVariantId IN (:...variantIds)', { variantIds })
+        .getRawMany<{ variantId: string; quantity: string }>();
+
+      for (const row of rows) {
+        stockMap.set(row.variantId, Number(row.quantity));
+      }
+    } else {
+      const rows = await this.stockSummaryRepo
+        .createQueryBuilder('s')
+        .select('s.productVariantId', 'variantId')
+        .addSelect('COALESCE(SUM(s.quantity), 0)', 'quantity')
+        .where('s.tenantId = :tenantId', { tenantId })
+        .andWhere('s."isActiveStore" = true')
+        .andWhere('s.productVariantId IN (:...variantIds)', { variantIds })
+        .groupBy('s.productVariantId')
+        .getRawMany<{ variantId: string; quantity: string }>();
+
+      for (const row of rows) {
+        stockMap.set(row.variantId, Number(row.quantity));
+      }
+    }
+
+    for (const pkg of packages) {
+      for (const item of pkg.items ?? []) {
+        const variantId = item.productVariant?.id;
+        (item as any).stock = variantId ? (stockMap.get(variantId) ?? 0) : 0;
+      }
+    }
   }
 }
