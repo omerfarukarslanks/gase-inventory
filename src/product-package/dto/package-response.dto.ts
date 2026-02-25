@@ -17,6 +17,7 @@ export class PackageItemResponse {
   createdById?: string;
   updatedAt: Date;
   updatedById?: string;
+  productId?: string;
   quantity: number;
   productVariant: PackageVariantResponse;
 }
@@ -67,6 +68,7 @@ export class PackageResponse {
       i.createdById = item.createdById;
       i.updatedAt = item.updatedAt;
       i.updatedById = item.updatedById;
+      i.productId = item.product?.id ?? item.productId;
       i.quantity = item.quantity;
       const v = new PackageVariantResponse();
       v.id = item.productVariant.id;

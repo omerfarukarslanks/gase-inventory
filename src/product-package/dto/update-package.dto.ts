@@ -38,33 +38,6 @@ export class UpdatePackageDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({ example: 150.0 })
-  @IsNumber()
-  @IsPositive()
-  @IsOptional()
-  defaultSalePrice?: number;
-
-  @ApiPropertyOptional({ example: 100.0 })
-  @IsNumber()
-  @IsPositive()
-  @IsOptional()
-  defaultPurchasePrice?: number;
-
-  @ApiPropertyOptional({ example: 18 })
-  @IsNumber()
-  @IsOptional()
-  defaultTaxPercent?: number;
-
-  @ApiPropertyOptional({ example: 10 })
-  @IsNumber()
-  @IsOptional()
-  defaultDiscountPercent?: number;
-
-  @ApiPropertyOptional({ example: 'TRY' })
-  @IsString()
-  @IsOptional()
-  defaultCurrency?: string;
-
   @ApiPropertyOptional({ example: true })
   @IsBoolean()
   @IsOptional()
@@ -73,6 +46,7 @@ export class UpdatePackageDto {
   /**
    * Gönderildiğinde mevcut item listesinin tamamı silinir,
    * yerine bu liste yazılır (full-replace semantics).
+   * Fiyat alanları otomatik olarak yeniden hesaplanır.
    */
   @ApiPropertyOptional({
     type: [UpdatePackageItemDto],

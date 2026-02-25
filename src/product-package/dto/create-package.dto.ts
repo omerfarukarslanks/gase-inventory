@@ -37,33 +37,6 @@ export class CreatePackageDto {
   @IsOptional()
   description?: string;
 
-  @ApiPropertyOptional({ example: 150.0, description: 'Varsayılan satış fiyatı (paket başına)' })
-  @IsNumber()
-  @IsPositive()
-  @IsOptional()
-  defaultSalePrice?: number;
-
-  @ApiPropertyOptional({ example: 100.0, description: 'Varsayılan alış fiyatı (paket başına)' })
-  @IsNumber()
-  @IsPositive()
-  @IsOptional()
-  defaultPurchasePrice?: number;
-
-  @ApiPropertyOptional({ example: 18, description: 'Varsayılan vergi oranı (%)' })
-  @IsNumber()
-  @IsOptional()
-  defaultTaxPercent?: number;
-
-  @ApiPropertyOptional({ example: 10, description: 'Varsayılan indirim oranı (%)' })
-  @IsNumber()
-  @IsOptional()
-  defaultDiscountPercent?: number;
-
-  @ApiPropertyOptional({ example: 'TRY', description: 'Varsayılan para birimi' })
-  @IsString()
-  @IsOptional()
-  defaultCurrency?: string;
-
   @ApiPropertyOptional({ example: true })
   @IsBoolean()
   @IsOptional()

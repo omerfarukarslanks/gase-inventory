@@ -14,6 +14,7 @@ import { CreatePackageDto } from '../product-package/dto/create-package.dto';
 import { UpdatePackageDto } from '../product-package/dto/update-package.dto';
 import { ListPackagesDto } from '../product-package/dto/list-packages.dto';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
 
 @Injectable()
 export class ProductPackageService {
@@ -37,28 +38,34 @@ export class ProductPackageService {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
 
-    await this.validateVariantsBelongToTenant(
+    const variants = await this.loadVariantsForTenant(
       dto.items.map((i) => i.productVariantId),
       tenantId,
     );
+
+    const itemsWithVariants = dto.items.map((i) => ({
+      productVariant: variants.find((v) => v.id === i.productVariantId)!,
+      quantity: i.quantity,
+    }));
+
+    const pricing = this.computePackagePricing(itemsWithVariants);
+    const defaultCurrency = this.resolvePackageCurrency(itemsWithVariants);
 
     const pkg = this.packageRepo.create({
       tenant: { id: tenantId } as any,
       name: dto.name,
       code: dto.code,
       description: dto.description,
-      defaultSalePrice: dto.defaultSalePrice,
-      defaultPurchasePrice: dto.defaultPurchasePrice,
-      defaultTaxPercent: dto.defaultTaxPercent,
-      defaultDiscountPercent: dto.defaultDiscountPercent,
-      defaultCurrency: dto.defaultCurrency ?? 'TRY',
+      ...pricing,
+      defaultCurrency,
       isActive: dto.isActive ?? true,
       createdById: userId,
       updatedById: userId,
-      items: dto.items.map((i) =>
+      items: itemsWithVariants.map(({ productVariant, quantity }) =>
         this.itemRepo.create({
-          productVariant: { id: i.productVariantId } as any,
-          quantity: i.quantity,
+          productVariant: { id: productVariant.id } as any,
+          product: { id: productVariant.product.id } as any,
+          quantity,
           createdById: userId,
           updatedById: userId,
         }),
@@ -78,21 +85,19 @@ export class ProductPackageService {
       .createQueryBuilder('pkg')
       .leftJoinAndSelect('pkg.items', 'item')
       .leftJoinAndSelect('item.productVariant', 'variant')
+      .leftJoinAndSelect('item.product', 'product')
       .where('pkg.tenantId = :tenantId', { tenantId });
 
-    // isActive filtresi
     if (query.isActive !== 'all') {
       qb.andWhere('pkg.isActive = :isActive', { isActive: query.isActive ?? true });
     }
 
-    // Arama
     if (query.search?.trim()) {
       qb.andWhere('(pkg.name ILIKE :search OR pkg.code ILIKE :search)', {
         search: `%${query.search.trim()}%`,
       });
     }
 
-    // Sıralama
     const allowedSortFields = ['name', 'code', 'createdAt', 'updatedAt', 'defaultSalePrice'];
     const sortField = allowedSortFields.includes(query.sortBy ?? '')
       ? `pkg.${query.sortBy}`
@@ -120,6 +125,7 @@ export class ProductPackageService {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const pkg = await this.packageRepo.findOne({
       where: { id, tenant: { id: tenantId } },
+      relations: ['items', 'items.productVariant', 'items.product'],
     });
     if (!pkg) {
       throw new NotFoundException(`ProductPackage ${id} bulunamadı.`);
@@ -136,25 +142,32 @@ export class ProductPackageService {
     if (dto.name !== undefined) pkg.name = dto.name;
     if (dto.code !== undefined) pkg.code = dto.code;
     if (dto.description !== undefined) pkg.description = dto.description;
-    if (dto.defaultSalePrice !== undefined) pkg.defaultSalePrice = dto.defaultSalePrice;
-    if (dto.defaultPurchasePrice !== undefined) pkg.defaultPurchasePrice = dto.defaultPurchasePrice;
-    if (dto.defaultTaxPercent !== undefined) pkg.defaultTaxPercent = dto.defaultTaxPercent;
-    if (dto.defaultDiscountPercent !== undefined) pkg.defaultDiscountPercent = dto.defaultDiscountPercent;
-    if (dto.defaultCurrency !== undefined) pkg.defaultCurrency = dto.defaultCurrency;
     if (dto.isActive !== undefined) pkg.isActive = dto.isActive;
     pkg.updatedById = userId;
 
     if (dto.items !== undefined) {
-      await this.validateVariantsBelongToTenant(
+      const variants = await this.loadVariantsForTenant(
         dto.items.map((i) => i.productVariantId),
         tenantId,
       );
+
+      const itemsWithVariants = dto.items.map((i) => ({
+        productVariant: variants.find((v) => v.id === i.productVariantId)!,
+        quantity: i.quantity,
+      }));
+
+      const pricing = this.computePackagePricing(itemsWithVariants);
+      const defaultCurrency = this.resolvePackageCurrency(itemsWithVariants);
+      Object.assign(pkg, pricing);
+      pkg.defaultCurrency = defaultCurrency;
+
       // Full-replace: sil ve yeniden yaz
       await this.itemRepo.delete({ productPackage: { id: pkg.id } });
-      pkg.items = dto.items.map((i) =>
+      pkg.items = itemsWithVariants.map(({ productVariant, quantity }) =>
         this.itemRepo.create({
-          productVariant: { id: i.productVariantId } as any,
-          quantity: i.quantity,
+          productVariant: { id: productVariant.id } as any,
+          product: { id: productVariant.product.id } as any,
+          quantity,
           createdById: userId,
           updatedById: userId,
         }),
@@ -221,6 +234,7 @@ export class ProductPackageService {
   async findForSaleOrThrow(packageId: string, tenantId: string): Promise<ProductPackage> {
     const pkg = await this.packageRepo.findOne({
       where: { id: packageId, tenant: { id: tenantId }, isActive: true },
+      relations: ['items', 'items.productVariant', 'items.product'],
     });
     if (!pkg) {
       throw new NotFoundException(`ProductPackage ${packageId} bulunamadı.`);
@@ -231,10 +245,13 @@ export class ProductPackageService {
     return pkg;
   }
 
-  private async validateVariantsBelongToTenant(
+  /**
+   * Variantları tenant'a ait olup olmadığını doğrulayarak yükler.
+   */
+  private async loadVariantsForTenant(
     variantIds: string[],
     tenantId: string,
-  ): Promise<void> {
+  ): Promise<ProductVariant[]> {
     const variants = await this.variantRepo.find({
       where: {
         id: In(variantIds),
@@ -247,5 +264,167 @@ export class ProductPackageService {
         'Bir veya daha fazla variant bu tenant\'a ait değil veya bulunamadı.',
       );
     }
+    return variants;
+  }
+
+  /**
+   * Paket içindeki item'ların bağlı olduğu product default değerlerinden fiyat alanlarını hesaplar.
+   *
+   * - Tutar alanları (salePrice, purchasePrice):
+   *   Σ(product_değeri × qty) — herhangi biri null ise sonuç null
+   * - İndirim/vergi tutarları ve lineTotal:
+   *   Her item için product default değerleri ile calculateLineAmounts çalıştırılır, sonuçlar toplanır.
+   * - Oran alanları (taxPercent, discountPercent):
+   *   1. Tutarlar mevcutsa → (toplam tutar / toplam satış fiyatı) × 100 (efektif oran)
+   *   2. Değilse → (product satış fiyatı × qty) ile ağırlıklı ortalama
+   */
+  private computePackagePricing(
+    items: { productVariant: ProductVariant; quantity: number }[],
+  ): Pick<
+    ProductPackage,
+    | 'defaultSalePrice'
+    | 'defaultPurchasePrice'
+    | 'defaultTaxPercent'
+    | 'defaultDiscountPercent'
+    | 'defaultDiscountAmount'
+    | 'defaultTaxAmount'
+    | 'defaultLineTotal'
+  > {
+    let totalSalePrice: number | null = 0;
+    let totalPurchasePrice: number | null = 0;
+    let totalDiscountAmount: number | null = 0;
+    let totalTaxAmount: number | null = 0;
+    let totalLineTotal: number | null = 0;
+
+    let weightedTaxPercent = 0;
+    let taxWeightTotal = 0;
+    let weightedDiscountPercent = 0;
+    let discountWeightTotal = 0;
+
+    for (const { productVariant: v, quantity: qty } of items) {
+      const product = v.product;
+      const salePrice =
+        product.defaultSalePrice != null ? Number(product.defaultSalePrice) : null;
+      const purchasePrice =
+        product.defaultPurchasePrice != null ? Number(product.defaultPurchasePrice) : null;
+      const discountPercent =
+        product.defaultDiscountPercent != null
+          ? Number(product.defaultDiscountPercent)
+          : null;
+      const discountAmountPerUnit =
+        product.defaultDiscountAmount != null
+          ? Number(product.defaultDiscountAmount)
+          : null;
+      const discountAmount =
+        discountPercent != null
+          ? null
+          : discountAmountPerUnit != null
+            ? discountAmountPerUnit * qty
+            : null;
+      const taxPercent =
+        product.defaultTaxPercent != null ? Number(product.defaultTaxPercent) : null;
+      const taxAmountPerUnit =
+        product.defaultTaxAmount != null
+          ? Number(product.defaultTaxAmount)
+          : null;
+      const taxAmount =
+        taxPercent != null
+          ? null
+          : taxAmountPerUnit != null
+            ? taxAmountPerUnit * qty
+            : null;
+
+      totalSalePrice =
+        totalSalePrice !== null && salePrice != null
+          ? totalSalePrice + salePrice * qty
+          : null;
+
+      totalPurchasePrice =
+        totalPurchasePrice !== null && purchasePrice != null
+          ? totalPurchasePrice + purchasePrice * qty
+          : null;
+
+      if (
+        totalDiscountAmount !== null &&
+        totalTaxAmount !== null &&
+        totalLineTotal !== null &&
+        salePrice != null
+      ) {
+        const lineCalc = calculateLineAmounts({
+          quantity: qty,
+          unitPrice: salePrice,
+          discountPercent,
+          discountAmount,
+          taxPercent,
+          taxAmount,
+        });
+
+        totalDiscountAmount += lineCalc.discountAmount;
+        totalTaxAmount += lineCalc.taxAmount;
+        totalLineTotal += lineCalc.lineTotal;
+      } else {
+        totalDiscountAmount = null;
+        totalTaxAmount = null;
+        totalLineTotal = null;
+      }
+
+      // Ağırlık: product salePrice varsa salePrice×qty, yoksa qty
+      const weight = salePrice != null ? salePrice * qty : qty;
+      if (taxPercent != null) {
+        weightedTaxPercent += taxPercent * weight;
+        taxWeightTotal += weight;
+      }
+      if (discountPercent != null) {
+        weightedDiscountPercent += discountPercent * weight;
+        discountWeightTotal += weight;
+      }
+    }
+
+    // Efektif oranlar
+    let defaultTaxPercent: number | null = null;
+    if (totalTaxAmount !== null && totalSalePrice !== null && totalSalePrice > 0) {
+      defaultTaxPercent = (totalTaxAmount / totalSalePrice) * 100;
+    } else if (taxWeightTotal > 0) {
+      defaultTaxPercent = weightedTaxPercent / taxWeightTotal;
+    }
+
+    let defaultDiscountPercent: number | null = null;
+    if (totalDiscountAmount !== null && totalSalePrice !== null && totalSalePrice > 0) {
+      defaultDiscountPercent = (totalDiscountAmount / totalSalePrice) * 100;
+    } else if (discountWeightTotal > 0) {
+      defaultDiscountPercent = weightedDiscountPercent / discountWeightTotal;
+    }
+
+    return {
+      defaultSalePrice: totalSalePrice,
+      defaultPurchasePrice: totalPurchasePrice,
+      defaultTaxPercent,
+      defaultDiscountPercent,
+      defaultDiscountAmount: totalDiscountAmount,
+      defaultTaxAmount: totalTaxAmount,
+      defaultLineTotal: totalLineTotal,
+    };
+  }
+
+  private resolvePackageCurrency(
+    items: { productVariant: ProductVariant; quantity: number }[],
+  ): string {
+    const currencies = Array.from(
+      new Set(
+        items.map(({ productVariant }) => productVariant.product?.defaultCurrency ?? 'TRY'),
+      ),
+    );
+
+    if (currencies.length === 0) {
+      return 'TRY';
+    }
+
+    if (currencies.length > 1) {
+      throw new BadRequestException(
+        'Paket icindeki urunlerin defaultCurrency degeri ayni olmalidir.',
+      );
+    }
+
+    return currencies[0];
   }
 }

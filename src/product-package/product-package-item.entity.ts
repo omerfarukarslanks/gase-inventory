@@ -2,10 +2,12 @@ import {
   Column,
   Entity,
   ManyToOne,
+  RelationId,
 } from 'typeorm';
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
 import { ProductPackage } from './product-package.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { Product } from 'src/product/product.entity';
 
 @Entity({ name: 'product_package_items' })
 export class ProductPackageItem extends AuditableEntity {
@@ -16,6 +18,12 @@ export class ProductPackageItem extends AuditableEntity {
 
   @ManyToOne(() => ProductVariant, { eager: true, onDelete: 'RESTRICT' })
   productVariant: ProductVariant;
+
+  @ManyToOne(() => Product, { onDelete: 'RESTRICT', nullable: false })
+  product: Product;
+
+  @RelationId((item: ProductPackageItem) => item.product)
+  productId?: string;
 
   /**
    * Her paket biriminde bu variantten kaç adet bulunur.
