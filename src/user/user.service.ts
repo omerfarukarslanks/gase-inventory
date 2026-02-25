@@ -13,6 +13,7 @@ import { Store } from 'src/store/store.entity';
 import { generateRandomStoreName } from 'src/common/utils/random-store-name';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { ListUsersDto, PaginatedUsersResponse } from './dto/list-users.dto';
+import { StoreType } from 'src/common/constants/store-type.constants';
 
 @Injectable()
 export class UsersService {
@@ -565,6 +566,14 @@ export class UsersService {
     userId: string,
     tenantId: string,
   ): Promise<string | null> {
+    const { storeId } = await this.getDefaultStoreForUser(userId, tenantId);
+    return storeId;
+  }
+
+  async getDefaultStoreForUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ storeId: string | null; storeType: StoreType | null }> {
     const userStore = await this.userStoreRepo.findOne({
       where: {
         user: {
@@ -582,7 +591,10 @@ export class UsersService {
       },
     });
 
-    return userStore?.store?.id ?? null;
+    return {
+      storeId: userStore?.store?.id ?? null,
+      storeType: userStore?.store?.storeType ?? null,
+    };
   }
 
   async deleteUser(userId: string): Promise<void> {

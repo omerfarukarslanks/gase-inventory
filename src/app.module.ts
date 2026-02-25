@@ -25,6 +25,7 @@ import { SupplierModule } from './supplier/supplier.module';
 import { CustomerModule } from './customer/customer.module';
 import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { ProductPackageModule } from './product-package/product-package.module';
 
 @Module({
   imports: [
@@ -96,6 +97,7 @@ import { ScheduleModule } from '@nestjs/schedule';
     CustomerModule,
     ScheduleModule.forRoot(),
     ExchangeRateModule,
+    ProductPackageModule,
   ],
   controllers: [AppController],
   providers: [

@@ -39,7 +39,7 @@ export class AuthService {
       throw new UnauthorizedException('Geçersiz email veya şifre');
     }
 
-    const storeId = await this.usersService.getDefaultStoreIdForUser(
+    const { storeId, storeType } = await this.usersService.getDefaultStoreForUser(
       user.id,
       user.tenant.id,
     );
@@ -48,6 +48,7 @@ export class AuthService {
       tenantId: user.tenant.id,
       role: user.role,
       storeId,
+      storeType,
     };
 
     return {
@@ -59,6 +60,7 @@ export class AuthService {
         surname: user.surname,
         tenantId: user.tenant.id,
         storeId,
+        storeType,
         role: user.role,
       },
     };
@@ -76,7 +78,7 @@ export class AuthService {
       throw new UnauthorizedException('Hesap aktif değil');
     }
 
-    const storeId = await this.usersService.getDefaultStoreIdForUser(
+    const { storeId, storeType } = await this.usersService.getDefaultStoreForUser(
       user.id,
       user.tenant.id,
     );
@@ -85,6 +87,7 @@ export class AuthService {
       tenantId: user.tenant.id,
       role: user.role,
       storeId,
+      storeType,
     };
 
     return {
@@ -96,6 +99,7 @@ export class AuthService {
         surname: user.surname,
         tenantId: user.tenant.id,
         storeId,
+        storeType,
         role: user.role,
       },
     };

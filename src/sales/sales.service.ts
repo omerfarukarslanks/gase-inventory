@@ -32,6 +32,8 @@ import {
   PaginatedSalesResponse,
 } from './dto/list-sales.dto';
 import { CancelSaleDto } from './dto/cancel-sale.dto';
+import { ProductPackageService } from 'src/product-package/product-package.service';
+import { ProductPackage } from 'src/product-package/product-package.entity';
 
 @Injectable()
 export class SalesService {
@@ -51,6 +53,7 @@ export class SalesService {
     private readonly priceService: PriceService,
     private readonly dataSource: DataSource,
     private readonly exchangeRateService: ExchangeRateService,
+    private readonly packageService: ProductPackageService,
   ) { }
 
   private getSaleRepo(manager?: EntityManager): Repository<Sale> {
@@ -79,6 +82,130 @@ export class SalesService {
     if (paid <= 0) return PaymentStatus.UNPAID;
     if (paid >= total) return PaymentStatus.PAID;
     return PaymentStatus.PARTIAL;
+  }
+
+  /**
+   * Bir SaleLine için stok iade hareketi oluşturur.
+   * Paket satır ise her paket item için ayrı IN hareketi yaratır.
+   */
+  private async returnLineStock(
+    line: SaleLine,
+    saleId: string,
+    storeId: string,
+    manager: EntityManager,
+  ): Promise<void> {
+    if (line.productPackage) {
+      const pkg = line.productPackage as ProductPackage;
+      for (const item of pkg.items ?? []) {
+        const totalQty = Number(line.quantity) * Number(item.quantity);
+        await this.inventoryService.createReturnMovementForSaleLine(
+          {
+            saleId,
+            saleLineId: line.id,
+            storeId,
+            productVariantId: item.productVariant.id,
+            quantity: totalQty,
+            currency: line.currency,
+            unitPrice: undefined,
+            lineTotal: undefined,
+          },
+          manager,
+        );
+      }
+    } else if (line.productVariant) {
+      await this.inventoryService.createReturnMovementForSaleLine(
+        {
+          saleId,
+          saleLineId: line.id,
+          storeId,
+          productVariantId: line.productVariant.id,
+          quantity: Number(line.quantity),
+          currency: line.currency,
+          unitPrice: line.unitPrice,
+          discountPercent: line.discountPercent,
+          discountAmount: line.discountAmount,
+          taxPercent: line.taxPercent,
+          taxAmount: line.taxAmount,
+          lineTotal: line.lineTotal,
+          campaignCode: line.campaignCode,
+        },
+        manager,
+      );
+    }
+  }
+
+  /**
+   * Paket satır için SaleLine oluşturur ve her paket item'ı için stok düşer.
+   * Dönen değer: { net, lineTotal, currency }
+   */
+  private async createPackageLineAndDeductStock(
+    lineDto: { productPackageId: string; quantity: number; unitPrice?: number; currency?: string; discountPercent?: number; discountAmount?: number; taxPercent?: number; taxAmount?: number; lineTotal?: number; campaignCode?: string },
+    savedSale: Sale,
+    store: Store,
+    tenantId: string,
+    userId: string,
+    manager: EntityManager,
+  ): Promise<{ net: number; lineTotal: number; currency: string }> {
+    const pkg = await this.packageService.findForSaleOrThrow(lineDto.productPackageId, tenantId);
+
+    const unitPrice = lineDto.unitPrice ?? Number(pkg.defaultSalePrice ?? 0);
+    const currency = lineDto.currency ?? pkg.defaultCurrency ?? 'TRY';
+    const discountPercent = lineDto.discountPercent ?? (pkg.defaultDiscountPercent != null ? Number(pkg.defaultDiscountPercent) : null);
+    const discountAmount = discountPercent != null ? null : (lineDto.discountAmount ?? null);
+    const taxPercent = lineDto.taxPercent ?? (pkg.defaultTaxPercent != null ? Number(pkg.defaultTaxPercent) : null);
+    const taxAmount = taxPercent != null ? null : (lineDto.taxAmount ?? null);
+
+    const { net, lineTotal } = calculateLineAmounts({
+      quantity: lineDto.quantity,
+      unitPrice,
+      discountPercent,
+      discountAmount,
+      taxPercent,
+      taxAmount,
+    });
+
+    const saleLineRepo = manager.getRepository(SaleLine);
+    const line = saleLineRepo.create();
+    line.sale = { id: savedSale.id } as any;
+    line.productPackage = { id: pkg.id } as any;
+    line.productVariant = null;
+    line.quantity = lineDto.quantity;
+    line.currency = currency;
+    line.unitPrice = unitPrice;
+    line.discountPercent = discountPercent ?? undefined;
+    line.discountAmount = discountAmount ?? undefined;
+    line.taxPercent = taxPercent ?? undefined;
+    line.taxAmount = taxAmount ?? undefined;
+    line.lineTotal = lineTotal;
+    line.campaignCode = lineDto.campaignCode;
+    line.createdById = userId;
+    line.updatedById = userId;
+
+    const savedLine = await saleLineRepo.save(line);
+
+    // Her paket item için stok düş
+    for (const item of pkg.items) {
+      const itemQty = Number(lineDto.quantity) * Number(item.quantity);
+      await this.inventoryService.sellFromStore(
+        {
+          storeId: store.id,
+          productVariantId: item.productVariant.id,
+          quantity: itemQty,
+          reference: savedSale.receiptNo ?? `SALE-${savedSale.id}`,
+          meta: {
+            saleId: savedSale.id,
+            saleLineId: savedLine.id,
+            packageId: pkg.id,
+            packageItemId: item.id,
+          },
+          saleId: savedSale.id,
+          saleLineId: savedLine.id,
+        },
+        manager,
+      );
+    }
+
+    return { net, lineTotal, currency };
   }
 
   private async getTenantCustomerOrThrow(
@@ -187,29 +314,47 @@ export class SalesService {
       manager,
     );
 
-    const variantIds = [...new Set(dto.lines.map((line) => line.productVariantId))];
+    const variantIds = [...new Set(
+      dto.lines
+        .filter((l) => l.productVariantId)
+        .map((l) => l.productVariantId!),
+    )];
 
-    const variants = await manager.getRepository(ProductVariant).find({
-      where: {
-        id: In(variantIds),
-        product: { tenant: { id: tenantId } },
-      },
-      relations: ['product', 'product.tenant'],
-    });
+    const variants = variantIds.length > 0
+      ? await manager.getRepository(ProductVariant).find({
+          where: {
+            id: In(variantIds),
+            product: { tenant: { id: tenantId } },
+          },
+          relations: ['product', 'product.tenant'],
+        })
+      : [];
 
     if (variants.length !== variantIds.length) {
       throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
+    }
+
+    // Paket olmayan satırlar için en az bir productVariantId veya productPackageId olmalı
+    for (const l of dto.lines) {
+      if (!l.productVariantId && !l.productPackageId) {
+        throw new BadRequestException('Her satır için productVariantId veya productPackageId gönderilmelidir.');
+      }
+      if (l.productVariantId && l.productPackageId) {
+        throw new BadRequestException('Bir satırda hem productVariantId hem productPackageId olamaz.');
+      }
     }
 
     const variantMap = new Map<string, ProductVariant>(
       variants.map((variant) => [variant.id, variant]),
     );
 
-    const effectivePrices = await this.priceService.getEffectiveSaleParamsForStoreBulk(
-      store.id,
-      variantIds,
-      manager,
-    );
+    const effectivePrices = variantIds.length > 0
+      ? await this.priceService.getEffectiveSaleParamsForStoreBulk(
+          store.id,
+          variantIds,
+          manager,
+        )
+      : new Map();
 
     let customerRelation: { id: string } | null = null;
     if (dto.customerId) {
@@ -241,112 +386,109 @@ export class SalesService {
 
     // 2) Satırları oluştur + stok düş
     for (const lineDto of dto.lines) {
-      const variant = variantMap.get(lineDto.productVariantId)!;
-      const priceParams = effectivePrices.get(lineDto.productVariantId);
+      if (lineDto.productPackageId) {
+        // --- Paket satır ---
+        const { net, lineTotal, currency } = await this.createPackageLineAndDeductStock(
+          lineDto as any,
+          savedSale,
+          store,
+          tenantId,
+          userId,
+          manager,
+        );
+        totalUnitPrice += net;
+        totalLineTotal += lineTotal;
+        saleCurrencies.add(currency);
+      } else {
+        // --- Tekil variant satır (mevcut davranış) ---
+        const variant = variantMap.get(lineDto.productVariantId!)!;
+        const priceParams = effectivePrices.get(lineDto.productVariantId!);
 
-      // 🔹 1) PriceService ile mağaza bazlı efektif parametreleri al
-      if (lineDto.unitPrice == null) {
-        lineDto.unitPrice = priceParams?.unitPrice ?? 0;
+        // 🔹 PriceService ile mağaza bazlı efektif parametreleri al
+        if (lineDto.unitPrice == null) {
+          lineDto.unitPrice = priceParams?.unitPrice ?? 0;
 
-        if (lineDto.taxPercent == null && priceParams?.taxPercent != null) {
-          lineDto.taxPercent = priceParams.taxPercent;
+          if (lineDto.taxPercent == null && priceParams?.taxPercent != null) {
+            lineDto.taxPercent = priceParams.taxPercent;
+          }
+
+          if (lineDto.discountPercent == null && priceParams?.discountPercent != null) {
+            lineDto.discountPercent = priceParams.discountPercent;
+          }
+
+          if (lineDto.discountPercent == null && lineDto.discountAmount == null && priceParams?.discountAmount != null) {
+            lineDto.discountAmount = priceParams.discountAmount;
+          }
+
+          if (lineDto.taxPercent == null && lineDto.taxAmount == null && priceParams?.taxAmount != null) {
+            lineDto.taxAmount = priceParams.taxAmount;
+          }
+
+          if (lineDto.lineTotal == null && priceParams?.lineTotal != null) {
+            lineDto.lineTotal = priceParams.lineTotal;
+          }
         }
 
-        if (
-          lineDto.discountPercent == null &&
-          priceParams?.discountPercent != null
-        ) {
-          lineDto.discountPercent = priceParams.discountPercent;
-        }
+        lineDto.currency = lineDto.currency ?? priceParams?.currency ?? 'TRY';
 
-        if (
-          lineDto.discountPercent == null &&
-          lineDto.discountAmount == null &&
-          priceParams?.discountAmount != null
-        ) {
-          lineDto.discountAmount = priceParams.discountAmount;
-        }
+        const { net, discountPercent, taxPercent, lineTotal } = calculateLineAmounts({
+          quantity: lineDto.quantity,
+          unitPrice: lineDto.unitPrice ?? 0,
+          discountPercent: lineDto.discountPercent ?? null,
+          discountAmount: lineDto.discountPercent != null ? null : (lineDto.discountAmount ?? null),
+          taxPercent: lineDto.taxPercent ?? null,
+          taxAmount: lineDto.taxPercent != null ? null : (lineDto.taxAmount ?? null),
+        });
 
-        if (
-          lineDto.taxPercent == null &&
-          lineDto.taxAmount == null &&
-          priceParams?.taxAmount != null
-        ) {
-          lineDto.taxAmount = priceParams.taxAmount;
-        }
+        const persistedDiscountPercent = lineDto.discountPercent != null ? (discountPercent ?? null) : null;
+        const persistedDiscountAmount = lineDto.discountPercent != null ? null : (lineDto.discountAmount ?? null);
+        const persistedTaxPercent = lineDto.taxPercent != null ? (taxPercent ?? null) : null;
+        const persistedTaxAmount = lineDto.taxPercent != null ? null : (lineDto.taxAmount ?? null);
 
-        if (lineDto.lineTotal == null && priceParams?.lineTotal != null) {
-          lineDto.lineTotal = priceParams.lineTotal;
-        }
+        const line = saleLineRepo.create();
+        line.sale = { id: savedSale.id } as any;
+        line.productVariant = { id: variant.id } as any;
+        line.productPackage = null;
+        line.quantity = lineDto.quantity;
+        line.currency = lineDto.currency;
+        line.unitPrice = lineDto.unitPrice;
+        line.discountPercent = persistedDiscountPercent ?? undefined;
+        line.discountAmount = persistedDiscountAmount ?? undefined;
+        line.taxPercent = persistedTaxPercent ?? undefined;
+        line.taxAmount = persistedTaxAmount ?? undefined;
+        line.lineTotal = lineTotal;
+        line.campaignCode = lineDto.campaignCode;
+        line.createdById = userId;
+        line.updatedById = userId;
+
+        const savedLine = await saleLineRepo.save(line);
+        saleLines.push(savedLine);
+        saleCurrencies.add(lineDto.currency ?? 'TRY');
+        totalUnitPrice += net;
+        totalLineTotal += lineTotal;
+
+        // Stok düş (OUT)
+        await this.inventoryService.sellFromStore(
+          {
+            storeId: store.id,
+            productVariantId: variant.id,
+            quantity: lineDto.quantity,
+            reference: savedSale.receiptNo ?? `SALE-${savedSale.id}`,
+            meta: { saleId: savedSale.id, saleLineId: savedLine.id },
+            currency: lineDto.currency,
+            unitPrice: lineDto.unitPrice,
+            discountPercent: persistedDiscountPercent ?? undefined,
+            discountAmount: persistedDiscountAmount ?? undefined,
+            taxPercent: persistedTaxPercent ?? undefined,
+            taxAmount: persistedTaxAmount ?? undefined,
+            lineTotal,
+            campaignCode: lineDto.campaignCode,
+            saleId: savedSale.id,
+            saleLineId: savedLine.id,
+          },
+          manager,
+        );
       }
-
-      lineDto.currency = lineDto.currency ?? priceParams?.currency ?? 'TRY';
-
-      const {
-        net,
-        discountPercent,
-        taxPercent,
-        lineTotal,
-      } = calculateLineAmounts({
-        quantity: lineDto.quantity,
-        unitPrice: lineDto.unitPrice ?? 0,
-        discountPercent: lineDto.discountPercent ?? null,
-        discountAmount: lineDto.discountPercent != null ? null : (lineDto.discountAmount ?? null),
-        taxPercent: lineDto.taxPercent ?? null,
-        taxAmount: lineDto.taxPercent != null ? null : (lineDto.taxAmount ?? null),
-      });
-
-      const persistedDiscountPercent =
-        lineDto.discountPercent != null ? (discountPercent ?? null) : null;
-      const persistedDiscountAmount =
-        lineDto.discountPercent != null ? null : (lineDto.discountAmount ?? null);
-      const persistedTaxPercent =
-        lineDto.taxPercent != null ? (taxPercent ?? null) : null;
-      const persistedTaxAmount =
-        lineDto.taxPercent != null ? null : (lineDto.taxAmount ?? null);
-
-      const line = saleLineRepo.create();
-      line.sale = { id: savedSale.id } as any;
-      line.productVariant = { id: variant.id } as any;
-      line.quantity = lineDto.quantity;
-      line.currency = lineDto.currency;
-      line.unitPrice = lineDto.unitPrice;
-      line.discountPercent = persistedDiscountPercent ?? undefined;
-      line.discountAmount = persistedDiscountAmount ?? undefined;
-      line.taxPercent = persistedTaxPercent ?? undefined;
-      line.taxAmount = persistedTaxAmount ?? undefined;
-      line.lineTotal = lineTotal;
-      line.campaignCode = lineDto.campaignCode;
-      line.createdById = userId;
-      line.updatedById = userId;
-
-      const savedLine = await saleLineRepo.save(line);
-      saleLines.push(savedLine);
-      saleCurrencies.add(lineDto.currency);
-
-      totalUnitPrice += net;
-      totalLineTotal += lineTotal;
-
-      // 3) Stok düş (OUT) – transaction-aware InventoryService
-      const sellDto: SellStockDto = {
-        storeId: store.id,
-        productVariantId: variant.id,
-        quantity: lineDto.quantity,
-        reference: savedSale.receiptNo ?? `SALE-${savedSale.id}`,
-        meta: { saleId: savedSale.id, saleLineId: savedLine.id },
-        currency: lineDto.currency,
-        unitPrice: lineDto.unitPrice,
-        discountPercent: persistedDiscountPercent ?? undefined,
-        discountAmount: persistedDiscountAmount ?? undefined,
-        taxPercent: persistedTaxPercent ?? undefined,
-        taxAmount: persistedTaxAmount ?? undefined,
-        lineTotal,
-        campaignCode: lineDto.campaignCode,
-        saleId: savedSale.id,
-        saleLineId: savedLine.id,
-      };
-
-      await this.inventoryService.sellFromStore(sellDto, manager);
     }
 
     // 4) Satış toplamlarını güncelle
@@ -413,7 +555,14 @@ export class SalesService {
 
     const sale = await saleRepo.findOne({
       where: { id, tenant: { id: tenantId } },
-      relations: ['store', 'lines', 'lines.productVariant'],
+      relations: [
+        'store',
+        'lines',
+        'lines.productVariant',
+        'lines.productPackage',
+        'lines.productPackage.items',
+        'lines.productPackage.items.productVariant',
+      ],
     });
 
     if (!sale) {
@@ -439,26 +588,9 @@ export class SalesService {
         throw new BadRequestException(SalesErrors.SALE_MUST_HAVE_LINES);
       }
 
-      // 1) Eski satirlari stok olarak iade et (IN)
+      // 1) Eski satirlari stok olarak iade et (IN) — paket satırlar da dahil
       for (const oldLine of sale.lines ?? []) {
-        await this.inventoryService.createReturnMovementForSaleLine(
-          {
-            saleId: sale.id,
-            saleLineId: oldLine.id,
-            storeId: sale.store.id,
-            productVariantId: oldLine.productVariant.id,
-            quantity: oldLine.quantity,
-            currency: oldLine.currency,
-            unitPrice: oldLine.unitPrice,
-            discountPercent: oldLine.discountPercent,
-            discountAmount: oldLine.discountAmount,
-            taxPercent: oldLine.taxPercent,
-            taxAmount: oldLine.taxAmount,
-            lineTotal: oldLine.lineTotal,
-            campaignCode: oldLine.campaignCode,
-          },
-          manager,
-        );
+        await this.returnLineStock(oldLine, sale.id, sale.store.id, manager);
       }
 
       // 2) Eski satirlari sil ve yeni satirlari yeniden yaz
@@ -469,14 +601,31 @@ export class SalesService {
         .where('saleId = :saleId', { saleId: sale.id })
         .execute();
 
-      const variantIds = [...new Set(dto.lines.map((line) => line.productVariantId))];
-      const variants = await manager.getRepository(ProductVariant).find({
-        where: {
-          id: In(variantIds),
-          product: { tenant: { id: tenantId } },
-        },
-        relations: ['product', 'product.tenant'],
-      });
+      // Satır validasyonu
+      for (const l of dto.lines) {
+        if (!l.productVariantId && !l.productPackageId) {
+          throw new BadRequestException('Her satır için productVariantId veya productPackageId gönderilmelidir.');
+        }
+        if (l.productVariantId && l.productPackageId) {
+          throw new BadRequestException('Bir satırda hem productVariantId hem productPackageId olamaz.');
+        }
+      }
+
+      const variantIds = [...new Set(
+        dto.lines
+          .filter((l) => l.productVariantId)
+          .map((l) => l.productVariantId!),
+      )];
+
+      const variants = variantIds.length > 0
+        ? await manager.getRepository(ProductVariant).find({
+            where: {
+              id: In(variantIds),
+              product: { tenant: { id: tenantId } },
+            },
+            relations: ['product', 'product.tenant'],
+          })
+        : [];
 
       if (variants.length !== variantIds.length) {
         throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
@@ -486,130 +635,124 @@ export class SalesService {
         variants.map((variant) => [variant.id, variant]),
       );
 
-      const effectivePrices = await this.priceService.getEffectiveSaleParamsForStoreBulk(
-        sale.store.id,
-        variantIds,
-        manager,
-      );
+      const effectivePrices = variantIds.length > 0
+        ? await this.priceService.getEffectiveSaleParamsForStoreBulk(
+            sale.store.id,
+            variantIds,
+            manager,
+          )
+        : new Map();
 
       let totalUnitPrice = 0;
       let totalLineTotal = 0;
       const saleCurrencies = new Set<string>();
 
+      // Yeni satış satırı ile referans satışı oluştur
+      const referenceSale = { id: sale.id, receiptNo: sale.receiptNo } as Sale;
+
       for (const lineDto of dto.lines) {
-        const variant = variantMap.get(lineDto.productVariantId)!;
-        const priceParams = effectivePrices.get(lineDto.productVariantId);
-        const workingLine = { ...lineDto };
+        if (lineDto.productPackageId) {
+          // --- Paket satır ---
+          const { net, lineTotal, currency } = await this.createPackageLineAndDeductStock(
+            lineDto as any,
+            referenceSale,
+            sale.store,
+            tenantId,
+            userId,
+            manager,
+          );
+          totalUnitPrice += net;
+          totalLineTotal += lineTotal;
+          saleCurrencies.add(currency);
+        } else {
+          // --- Tekil variant satır ---
+          const variant = variantMap.get(lineDto.productVariantId!)!;
+          const priceParams = effectivePrices.get(lineDto.productVariantId!);
+          const workingLine = { ...lineDto };
 
-        if (workingLine.unitPrice == null) {
-          workingLine.unitPrice = priceParams?.unitPrice ?? 0;
+          if (workingLine.unitPrice == null) {
+            workingLine.unitPrice = priceParams?.unitPrice ?? 0;
 
-          if (workingLine.taxPercent == null && priceParams?.taxPercent != null) {
-            workingLine.taxPercent = priceParams.taxPercent;
+            if (workingLine.taxPercent == null && priceParams?.taxPercent != null) {
+              workingLine.taxPercent = priceParams.taxPercent;
+            }
+
+            if (workingLine.discountPercent == null && priceParams?.discountPercent != null) {
+              workingLine.discountPercent = priceParams.discountPercent;
+            }
+
+            if (workingLine.discountPercent == null && workingLine.discountAmount == null && priceParams?.discountAmount != null) {
+              workingLine.discountAmount = priceParams.discountAmount;
+            }
+
+            if (workingLine.taxPercent == null && workingLine.taxAmount == null && priceParams?.taxAmount != null) {
+              workingLine.taxAmount = priceParams.taxAmount;
+            }
+
+            if (workingLine.lineTotal == null && priceParams?.lineTotal != null) {
+              workingLine.lineTotal = priceParams.lineTotal;
+            }
           }
 
-          if (
-            workingLine.discountPercent == null &&
-            priceParams?.discountPercent != null
-          ) {
-            workingLine.discountPercent = priceParams.discountPercent;
-          }
+          workingLine.currency = workingLine.currency ?? priceParams?.currency ?? 'TRY';
+          const lineCurrency = workingLine.currency ?? 'TRY';
 
-          if (
-            workingLine.discountPercent == null &&
-            workingLine.discountAmount == null &&
-            priceParams?.discountAmount != null
-          ) {
-            workingLine.discountAmount = priceParams.discountAmount;
-          }
-
-          if (
-            workingLine.taxPercent == null &&
-            workingLine.taxAmount == null &&
-            priceParams?.taxAmount != null
-          ) {
-            workingLine.taxAmount = priceParams.taxAmount;
-          }
-
-          if (workingLine.lineTotal == null && priceParams?.lineTotal != null) {
-            workingLine.lineTotal = priceParams.lineTotal;
-          }
-        }
-
-        workingLine.currency = workingLine.currency ?? priceParams?.currency ?? 'TRY';
-        const lineCurrency = workingLine.currency ?? 'TRY';
-
-        const {
-          net,
-          discountPercent,
-          taxPercent,
-          lineTotal,
-        } = calculateLineAmounts({
-          quantity: workingLine.quantity,
-          unitPrice: workingLine.unitPrice ?? 0,
-          discountPercent: workingLine.discountPercent ?? null,
-          discountAmount:
-            workingLine.discountPercent != null
-              ? null
-              : (workingLine.discountAmount ?? null),
-          taxPercent: workingLine.taxPercent ?? null,
-          taxAmount:
-            workingLine.taxPercent != null
-              ? null
-              : (workingLine.taxAmount ?? null),
-        });
-
-        const persistedDiscountPercent =
-          workingLine.discountPercent != null ? (discountPercent ?? null) : null;
-        const persistedDiscountAmount =
-          workingLine.discountPercent != null
-            ? null
-            : (workingLine.discountAmount ?? null);
-        const persistedTaxPercent =
-          workingLine.taxPercent != null ? (taxPercent ?? null) : null;
-        const persistedTaxAmount =
-          workingLine.taxPercent != null ? null : (workingLine.taxAmount ?? null);
-
-        const line = saleLineRepo.create();
-        line.sale = { id: sale.id } as any;
-        line.productVariant = { id: variant.id } as any;
-        line.quantity = workingLine.quantity;
-        line.currency = lineCurrency;
-        line.unitPrice = workingLine.unitPrice;
-        line.discountPercent = persistedDiscountPercent ?? undefined;
-        line.discountAmount = persistedDiscountAmount ?? undefined;
-        line.taxPercent = persistedTaxPercent ?? undefined;
-        line.taxAmount = persistedTaxAmount ?? undefined;
-        line.lineTotal = lineTotal;
-        line.campaignCode = workingLine.campaignCode;
-        line.createdById = userId;
-        line.updatedById = userId;
-
-        const savedLine = await saleLineRepo.save(line);
-        saleCurrencies.add(lineCurrency);
-        totalUnitPrice += net;
-        totalLineTotal += lineTotal;
-
-        await this.inventoryService.sellFromStore(
-          {
-            storeId: sale.store.id,
-            productVariantId: variant.id,
+          const { net, discountPercent, taxPercent, lineTotal } = calculateLineAmounts({
             quantity: workingLine.quantity,
-            reference: sale.receiptNo ?? `SALE-${sale.id}`,
-            meta: { saleId: sale.id, saleLineId: savedLine.id, edited: true },
-            currency: lineCurrency,
-            unitPrice: workingLine.unitPrice,
-            discountPercent: persistedDiscountPercent ?? undefined,
-            discountAmount: persistedDiscountAmount ?? undefined,
-            taxPercent: persistedTaxPercent ?? undefined,
-            taxAmount: persistedTaxAmount ?? undefined,
-            lineTotal,
-            campaignCode: workingLine.campaignCode,
-            saleId: sale.id,
-            saleLineId: savedLine.id,
-          },
-          manager,
-        );
+            unitPrice: workingLine.unitPrice ?? 0,
+            discountPercent: workingLine.discountPercent ?? null,
+            discountAmount: workingLine.discountPercent != null ? null : (workingLine.discountAmount ?? null),
+            taxPercent: workingLine.taxPercent ?? null,
+            taxAmount: workingLine.taxPercent != null ? null : (workingLine.taxAmount ?? null),
+          });
+
+          const persistedDiscountPercent = workingLine.discountPercent != null ? (discountPercent ?? null) : null;
+          const persistedDiscountAmount = workingLine.discountPercent != null ? null : (workingLine.discountAmount ?? null);
+          const persistedTaxPercent = workingLine.taxPercent != null ? (taxPercent ?? null) : null;
+          const persistedTaxAmount = workingLine.taxPercent != null ? null : (workingLine.taxAmount ?? null);
+
+          const line = saleLineRepo.create();
+          line.sale = { id: sale.id } as any;
+          line.productVariant = { id: variant.id } as any;
+          line.productPackage = null;
+          line.quantity = workingLine.quantity;
+          line.currency = lineCurrency;
+          line.unitPrice = workingLine.unitPrice;
+          line.discountPercent = persistedDiscountPercent ?? undefined;
+          line.discountAmount = persistedDiscountAmount ?? undefined;
+          line.taxPercent = persistedTaxPercent ?? undefined;
+          line.taxAmount = persistedTaxAmount ?? undefined;
+          line.lineTotal = lineTotal;
+          line.campaignCode = workingLine.campaignCode;
+          line.createdById = userId;
+          line.updatedById = userId;
+
+          const savedLine = await saleLineRepo.save(line);
+          saleCurrencies.add(lineCurrency);
+          totalUnitPrice += net;
+          totalLineTotal += lineTotal;
+
+          await this.inventoryService.sellFromStore(
+            {
+              storeId: sale.store.id,
+              productVariantId: variant.id,
+              quantity: workingLine.quantity,
+              reference: sale.receiptNo ?? `SALE-${sale.id}`,
+              meta: { saleId: sale.id, saleLineId: savedLine.id, edited: true },
+              currency: lineCurrency,
+              unitPrice: workingLine.unitPrice,
+              discountPercent: persistedDiscountPercent ?? undefined,
+              discountAmount: persistedDiscountAmount ?? undefined,
+              taxPercent: persistedTaxPercent ?? undefined,
+              taxAmount: persistedTaxAmount ?? undefined,
+              lineTotal,
+              campaignCode: workingLine.campaignCode,
+              saleId: sale.id,
+              saleLineId: savedLine.id,
+            },
+            manager,
+          );
+        }
       }
 
       sale.unitPrice = totalUnitPrice;
@@ -659,7 +802,14 @@ export class SalesService {
 
     const sale = await saleRepo.findOne({
       where: { id, tenant: { id: tenantId } },
-      relations: ['store', 'lines', 'lines.productVariant'],
+      relations: [
+        'store',
+        'lines',
+        'lines.productVariant',
+        'lines.productPackage',
+        'lines.productPackage.items',
+        'lines.productPackage.items.productVariant',
+      ],
     });
 
     if (!sale) {
@@ -677,26 +827,9 @@ export class SalesService {
       });
     }
 
-    // Her satır için iade (IN)
+    // Her satır için iade (IN) — paket satırlar da dahil
     for (const line of sale.lines) {
-      await this.inventoryService.createReturnMovementForSaleLine(
-        {
-          saleId: sale.id,
-          saleLineId: line.id,
-          storeId: sale.store.id,
-          productVariantId: line.productVariant.id,
-          quantity: line.quantity,
-          currency: line.currency,
-          unitPrice: line.unitPrice,
-          discountPercent: line.discountPercent,
-          discountAmount: line.discountAmount,
-          taxPercent: line.taxPercent,
-          taxAmount: line.taxAmount,
-          lineTotal: line.lineTotal,
-          campaignCode: line.campaignCode,
-        },
-        manager,
-      );
+      await this.returnLineStock(line, sale.id, sale.store.id, manager);
     }
 
     sale.status = SaleStatus.CANCELLED;
@@ -727,6 +860,9 @@ export class SalesService {
         'lines',
         'lines.productVariant',
         'lines.productVariant.product',
+        'lines.productPackage',
+        'lines.productPackage.items',
+        'lines.productPackage.items.productVariant',
       ],
     });
 
@@ -776,6 +912,7 @@ export class SalesService {
       paymentStatus: sale.paymentStatus,
       lines: (sale.lines ?? []).map((line) => ({
         id: line.id,
+        // Tekil variant satırı
         productId: line.productVariant?.product?.id ?? null,
         productName: line.productVariant?.product?.name ?? null,
         productVariant: line.productVariant
@@ -785,13 +922,24 @@ export class SalesService {
               code: line.productVariant.code,
             }
           : null,
+        // Paket satırı
+        productPackage: line.productPackage
+          ? {
+              id: line.productPackage.id,
+              name: line.productPackage.name,
+              code: line.productPackage.code ?? null,
+              items: (line.productPackage.items ?? []).map((item) => ({
+                variantId: item.productVariant.id,
+                variantName: item.productVariant.name,
+                qtyPerPackage: String(item.quantity),
+              })),
+            }
+          : null,
         quantity: String(line.quantity ?? 0),
         currency: line.currency ?? null,
         unitPrice: line.unitPrice != null ? String(line.unitPrice) : null,
-        discountPercent:
-          line.discountPercent != null ? String(line.discountPercent) : null,
-        discountAmount:
-          line.discountAmount != null ? String(line.discountAmount) : null,
+        discountPercent: line.discountPercent != null ? String(line.discountPercent) : null,
+        discountAmount: line.discountAmount != null ? String(line.discountAmount) : null,
         taxPercent: line.taxPercent != null ? String(line.taxPercent) : null,
         taxAmount: line.taxAmount != null ? String(line.taxAmount) : null,
         lineTotal: line.lineTotal != null ? String(line.lineTotal) : null,

@@ -1,5 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsEnum, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { StoreType } from 'src/common/constants/store-type.constants';
 
 export class UpdateStoreDto {
   @ApiPropertyOptional({ example: 'Kadıköy Mağaza v2' })
@@ -37,4 +38,13 @@ export class UpdateStoreDto {
   @IsBoolean()
   @IsOptional()
   isActive?: boolean;
+
+  @ApiPropertyOptional({
+    example: StoreType.WHOLESALE,
+    description: 'Mağaza tipi: perakende (RETAIL) veya toptan (WHOLESALE)',
+    enum: StoreType,
+  })
+  @IsEnum(StoreType)
+  @IsOptional()
+  storeType?: StoreType;
 }

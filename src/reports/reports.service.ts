@@ -890,19 +890,60 @@ export class ReportsService {
       lineTotal: string;
     }>();
 
-    const mapped = rows.map((row) => {
+    // Paket satış satırları için ayrı sorgu
+    const pkgQb = this.getSaleLineRepo(manager)
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .innerJoin('line.productPackage', 'pkg')
+      .select('pkg.id', 'productId')
+      .addSelect('pkg.name', 'productName')
+      .addSelect('pkg.id', 'productVariantId')
+      .addSelect('pkg.name', 'variantName')
+      .addSelect("COALESCE(pkg.code, '')", 'variantCode')
+      .addSelect('COALESCE(SUM(line.quantity), 0)', 'quantity')
+      .addSelect('COALESCE(SUM(COALESCE(line."lineTotal", 0)), 0)', 'lineTotal')
+      .addSelect('0', 'totalUnitPrice')
+      .addSelect('COALESCE(SUM(CASE WHEN line."discountAmount" IS NOT NULL THEN line."discountAmount" WHEN line."discountPercent" IS NOT NULL THEN COALESCE(line."lineTotal", 0) * line."discountPercent" / 100 ELSE 0 END), 0)', 'totalDiscount')
+      .addSelect('COALESCE(SUM(CASE WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount" WHEN line."taxPercent" IS NOT NULL THEN COALESCE(line."lineTotal", 0) * line."taxPercent" / 100 ELSE 0 END), 0)', 'totalTax')
+      .where('sale.tenantId = :tenantId', { tenantId })
+      .andWhere('sale.status = :confirmedStatus', { confirmedStatus: SaleStatus.CONFIRMED })
+      .andWhere('line.productPackageId IS NOT NULL')
+      .groupBy('pkg.id')
+      .addGroupBy('pkg.name')
+      .addGroupBy('pkg.code');
+
+    if (scope.storeIds?.length) {
+      pkgQb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
+    }
+    if (search) {
+      pkgQb.andWhere('(pkg.name ILIKE :search OR pkg.code ILIKE :search)', { search: `%${search}%` });
+    }
+    this.applyDateFilter(pkgQb, 'sale', 'createdAt', start, end);
+
+    const pkgRows = await pkgQb.getRawMany<{
+      productId: string; productName: string; productVariantId: string;
+      variantName: string; variantCode: string; quantity: string;
+      totalUnitPrice: string; totalDiscount: string; totalTax: string; lineTotal: string;
+    }>();
+
+    const allRows = [...rows, ...pkgRows];
+
+    const mapped = allRows.map((row) => {
       const quantity = this.toNumber(row.quantity);
       const totalUnitPrice = this.toNumber(row.totalUnitPrice);
       const totalDiscount = this.toNumber(row.totalDiscount);
       const totalTax = this.toNumber(row.totalTax);
       const lineTotal = this.toNumber(row.lineTotal);
+      const isPackage = pkgRows.some((p) => p.productVariantId === row.productVariantId);
 
       return {
-        productId: row.productId,
+        productId: isPackage ? null : row.productId,
         productName: row.productName,
-        productVariantId: row.productVariantId,
+        productVariantId: isPackage ? null : row.productVariantId,
         variantName: row.variantName,
-        variantCode: row.variantCode,
+        variantCode: row.variantCode || null,
+        packageId: isPackage ? row.productId : null,
+        isPackage,
         quantity,
         totalUnitPrice,
         totalDiscount,
@@ -2408,7 +2449,38 @@ export class ReportsService {
 
     const rows = await qb.getRawMany();
 
-    // Stok bilgisi
+    // Paket satışları için ayrı sorgu
+    const pkgRankQb = this.getSaleLineRepo(manager)
+      .createQueryBuilder('line')
+      .innerJoin('line.sale', 'sale')
+      .innerJoin('line.productPackage', 'pkg')
+      .select('pkg.id', 'productId')
+      .addSelect('pkg.name', 'productName')
+      .addSelect('pkg.id', 'productVariantId')
+      .addSelect('pkg.name', 'variantName')
+      .addSelect("COALESCE(pkg.code, '')", 'variantCode')
+      .addSelect('COALESCE(SUM(line.quantity), 0)', 'soldQuantity')
+      .addSelect('COALESCE(SUM(COALESCE(line."lineTotal", 0)), 0)', 'totalRevenue')
+      .addSelect('COUNT(DISTINCT sale.id)', 'saleCount')
+      .where('sale.tenantId = :tenantId', { tenantId })
+      .andWhere('sale.status = :status', { status: SaleStatus.CONFIRMED })
+      .andWhere('line.productPackageId IS NOT NULL')
+      .groupBy('pkg.id')
+      .addGroupBy('pkg.name')
+      .addGroupBy('pkg.code')
+      .orderBy('"soldQuantity"', 'DESC');
+
+    if (scope.storeIds?.length) {
+      pkgRankQb.andWhere('sale.storeId IN (:...storeIds)', { storeIds: scope.storeIds });
+    }
+    this.applyDateFilter(pkgRankQb, 'sale', 'createdAt', start, end);
+    if (search) {
+      pkgRankQb.andWhere('(pkg.name ILIKE :search OR pkg.code ILIKE :search)', { search: `%${search}%` });
+    }
+
+    const pkgRankRows = await pkgRankQb.getRawMany();
+
+    // Stok bilgisi (sadece varyant satırları için)
     const variantIds = rows.map((r) => r.productVariantId);
     const stockMap = new Map<string, number>();
 
@@ -2432,20 +2504,30 @@ export class ReportsService {
       }
     }
 
-    const mapped = rows.map((row, idx) => {
-      const stock = stockMap.get(row.productVariantId) ?? 0;
+    // Variant + paket sonuçlarını birleştir, soldQuantity'e göre sırala
+    const allRankRows = [
+      ...rows.map((r) => ({ ...r, isPackage: false })),
+      ...pkgRankRows.map((r) => ({ ...r, isPackage: true })),
+    ].sort((a, b) => this.toNumber(b.soldQuantity) - this.toNumber(a.soldQuantity));
+
+    const mapped = allRankRows.map((row, idx) => {
+      const stock = row.isPackage ? null : (stockMap.get(row.productVariantId) ?? 0);
       return {
         rank: idx + 1,
-        productId: row.productId,
+        isPackage: row.isPackage,
+        productId: row.isPackage ? null : row.productId,
         productName: row.productName,
-        productVariantId: row.productVariantId,
+        productVariantId: row.isPackage ? null : row.productVariantId,
+        packageId: row.isPackage ? row.productId : null,
         variantName: row.variantName,
-        variantCode: row.variantCode,
+        variantCode: row.variantCode || null,
         soldQuantity: this.toNumber(row.soldQuantity),
         totalRevenue: this.toNumber(row.totalRevenue),
         saleCount: this.toNumber(row.saleCount),
         currentStock: stock,
-        stockStatus: stock <= 0 ? 'OUT_OF_STOCK' : stock <= 10 ? 'LOW' : 'IN_STOCK',
+        stockStatus: row.isPackage
+          ? null
+          : stock! <= 0 ? 'OUT_OF_STOCK' : stock! <= 10 ? 'LOW' : 'IN_STOCK',
       };
     });
 

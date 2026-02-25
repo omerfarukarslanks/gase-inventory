@@ -3,12 +3,14 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { UsersService } from 'src/user/user.service';
+import { StoreType } from 'src/common/constants/store-type.constants';
 
 export interface JwtPayload {
   sub: string;
   tenantId: string;
   role: string;
   storeId?: string | null;
+  storeType?: StoreType | null;
 }
 
 @Injectable()
@@ -40,16 +42,26 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException();
     }
 
-    const resolvedStoreId =
-      payload.storeId ??
-      (await this.usersService.getDefaultStoreIdForUser(
+    let resolvedStoreId = payload.storeId;
+    let resolvedStoreType = payload.storeType;
+
+    if (resolvedStoreId === undefined || resolvedStoreType === undefined) {
+      const defaultStore = await this.usersService.getDefaultStoreForUser(
         user.id,
         user.tenant.id,
-      ));
+      );
+      if (resolvedStoreId === undefined) {
+        resolvedStoreId = defaultStore.storeId;
+      }
+      if (resolvedStoreType === undefined) {
+        resolvedStoreType = defaultStore.storeType;
+      }
+    }
 
     return {
       ...user,
       storeId: resolvedStoreId,
+      storeType: resolvedStoreType,
     }; // request.user
   }
 }

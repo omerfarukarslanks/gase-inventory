@@ -6,14 +6,20 @@ import {
 import { Sale } from './sale.entity';
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { ProductPackage } from 'src/product-package/product-package.entity';
 
 @Entity({ name: 'sale_lines' })
 export class SaleLine extends AuditableEntity {
   @ManyToOne(() => Sale, (sale) => sale.lines, { onDelete: 'CASCADE' })
   sale: Sale;
 
-  @ManyToOne(() => ProductVariant, { eager: true })
-  productVariant: ProductVariant;
+  /** Tekil variant satışı — ya bu ya productPackage dolu olur */
+  @ManyToOne(() => ProductVariant, { eager: true, nullable: true })
+  productVariant?: ProductVariant | null;
+
+  /** Paket satışı — ya bu ya productVariant dolu olur */
+  @ManyToOne(() => ProductPackage, { eager: true, nullable: true })
+  productPackage?: ProductPackage | null;
 
   @Column({ type: 'numeric' })
   quantity: number;

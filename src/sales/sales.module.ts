@@ -11,13 +11,15 @@ import { ProductVariant } from 'src/product/product-variant.entity';
 import { InventoryModule } from 'src/inventory/inventory.module';
 import { PriceModule } from 'src/pricing/price.module';
 import { ExchangeRateModule } from 'src/exchange-rate/exchange-rate.module';
+import { ProductPackageModule } from 'src/product-package/product-package.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([Sale, SaleLine, SalePayment, Customer, Store, ProductVariant]),
-    InventoryModule,      // stok düşmek için
-    PriceModule,          // fiyat hesaplamak için
-    ExchangeRateModule,   // döviz kuru dönüşümü için
+    InventoryModule,          // stok düşmek için
+    PriceModule,              // fiyat hesaplamak için
+    ExchangeRateModule,       // döviz kuru dönüşümü için
+    ProductPackageModule,     // toptan paket satışı için
   ],
   providers: [SalesService],
   controllers: [SalesController],

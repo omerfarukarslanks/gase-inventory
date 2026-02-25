@@ -1,11 +1,22 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger/dist/decorators/api-property.decorator";
-import { IsString, IsUUID, IsPositive, IsIn, IsNumber,IsNotEmpty, IsOptional } from "class-validator";
+import { IsString, IsUUID, IsPositive, IsIn, IsNumber, IsNotEmpty, IsOptional } from "class-validator";
 
 export class CreateSaleLineDto {
-  @ApiProperty({ description: 'Satılan ürün varyant ID' })
+  /**
+   * Tekil variant satışı — ya bu ya productPackageId gönderilmeli.
+   */
+  @ApiPropertyOptional({ description: 'Satılan ürün varyant ID (tekil satış)' })
   @IsUUID('4', { message: 'productVariantId geçerli bir UUID olmalıdır' })
-  @IsNotEmpty({ message: 'productVariantId boş olamaz' })
-  productVariantId: string;
+  @IsOptional()
+  productVariantId?: string;
+
+  /**
+   * Paket satışı — ya bu ya productVariantId gönderilmeli.
+   */
+  @ApiPropertyOptional({ description: 'Paket ID (toptan paket satışı)' })
+  @IsUUID('4', { message: 'productPackageId geçerli bir UUID olmalıdır' })
+  @IsOptional()
+  productPackageId?: string;
 
   @ApiProperty({ description: 'Satılan miktar (> 0)' })
   @IsNotEmpty({ message: 'quantity boş olamaz' })
