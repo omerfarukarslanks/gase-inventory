@@ -1,4 +1,4 @@
-import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
+import { ContactBase } from 'src/common/entity/contact-base.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
 import { Column, Entity, ManyToOne } from 'typeorm';
 
@@ -9,18 +9,9 @@ export enum Gender {
 }
 
 @Entity({ name: 'customers' })
-export class Customer extends AuditableEntity {
+export class Customer extends ContactBase {
   @ManyToOne(() => Tenant, { eager: true })
   tenant: Tenant;
-
-  @Column()
-  name: string;
-
-  @Column({ nullable: true })
-  surname?: string;
-
-  @Column({ nullable: true })
-  address?: string;
 
   @Column({ nullable: true })
   country?: string;
@@ -31,18 +22,9 @@ export class Customer extends AuditableEntity {
   @Column({ nullable: true })
   district?: string;
 
-  @Column({ nullable: true })
-  phoneNumber?: string;
-
-  @Column({ nullable: true })
-  email?: string;
-
   @Column({ type: 'enum', enum: Gender, nullable: true })
   gender?: Gender;
 
   @Column({ type: 'date', nullable: true })
   birthDate?: string;
-
-  @Column({ default: true })
-  isActive: boolean;
 }

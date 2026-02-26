@@ -44,6 +44,12 @@ export class ProductController {
     return this.productsService.findAll(query);
   }
 
+  @Get('variants/lookup')
+  @ApiOperation({ summary: 'Barkoda gore urun varyanti bul (tenant kapsaminda)' })
+  lookupByBarcode(@Query('barcode') barcode: string) {
+    return this.productsService.lookupByBarcode(barcode?.trim() ?? '');
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Belirli bir urunu getir' })
   findOne(@Param('id', ParseUUIDPipe) id: string) {

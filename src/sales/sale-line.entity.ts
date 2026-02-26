@@ -1,4 +1,5 @@
 import {
+  Check,
   Column,
   Entity,
   ManyToOne,
@@ -9,6 +10,7 @@ import { ProductVariant } from 'src/product/product-variant.entity';
 import { ProductPackage } from 'src/product-package/product-package.entity';
 
 @Entity({ name: 'sale_lines' })
+@Check(`"productVariantId" IS NOT NULL OR "productPackageId" IS NOT NULL`)
 export class SaleLine extends AuditableEntity {
   @ManyToOne(() => Sale, (sale) => sale.lines, { onDelete: 'CASCADE' })
   sale: Sale;

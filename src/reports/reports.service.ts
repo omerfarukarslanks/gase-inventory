@@ -197,6 +197,56 @@ export class ReportsService {
     return { hasPagination, page: safePage, limit: safeLimit, skip };
   }
 
+  /**
+   * Satır bazlı fiyat hesaplama SQL ifadeleri.
+   * net = unitPrice * qty
+   * discount = discountAmount ?? (net * discountPercent / 100)
+   * tax = taxAmount ?? ((net - discount) * taxPercent / 100)
+   * lineTotal = DB değeri ?? (net - discount + tax)
+   */
+  private lineExprs(): {
+    netExpr: string;
+    discountExpr: string;
+    taxExpr: string;
+    lineTotalExpr: string;
+  } {
+    const netExpr = 'COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)';
+    const discountExpr = `CASE
+      WHEN line."discountAmount" IS NOT NULL THEN line."discountAmount"
+      WHEN line."discountPercent" IS NOT NULL THEN ((${netExpr}) * line."discountPercent" / 100)
+      ELSE 0
+    END`;
+    const taxableExpr = `((${netExpr}) - (${discountExpr}))`;
+    const taxExpr = `CASE
+      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
+      WHEN line."taxPercent" IS NOT NULL THEN ((${taxableExpr}) * line."taxPercent" / 100)
+      ELSE 0
+    END`;
+    const lineTotalExpr = `COALESCE(line."lineTotal", ((${taxableExpr}) + (${taxExpr})))`;
+    return { netExpr, discountExpr, taxExpr, lineTotalExpr };
+  }
+
+  /**
+   * KDV / vergi gruplama SQL ifadeleri (taxPercent'e göre gruplama için).
+   * taxRateExpr = COALESCE(taxPercent, 0)
+   * netExpr = unitPrice * qty
+   * taxAmountExpr = taxAmount ?? (net * taxPercent / 100)
+   */
+  private vatLineExprs(): {
+    taxRateExpr: string;
+    netExpr: string;
+    taxAmountExpr: string;
+  } {
+    const taxRateExpr = `COALESCE(line."taxPercent", 0)`;
+    const netExpr = `COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)`;
+    const taxAmountExpr = `CASE
+      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
+      WHEN line."taxPercent" IS NOT NULL THEN ((${netExpr}) * line."taxPercent" / 100)
+      ELSE 0
+    END`;
+    return { taxRateExpr, netExpr, taxAmountExpr };
+  }
+
   private toNumber(value: unknown): number {
     if (value === null || value === undefined) {
       return 0;
@@ -826,19 +876,7 @@ export class ReportsService {
     const pagination = this.resolvePagination(query.page, query.limit);
     const search = query.search?.trim();
 
-    const netExpr = 'COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)';
-    const discountExpr = `CASE
-      WHEN line."discountAmount" IS NOT NULL THEN line."discountAmount"
-      WHEN line."discountPercent" IS NOT NULL THEN ((${netExpr}) * line."discountPercent" / 100)
-      ELSE 0
-    END`;
-    const taxableExpr = `((${netExpr}) - (${discountExpr}))`;
-    const taxExpr = `CASE
-      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
-      WHEN line."taxPercent" IS NOT NULL THEN ((${taxableExpr}) * line."taxPercent" / 100)
-      ELSE 0
-    END`;
-    const lineTotalExpr = `COALESCE(line."lineTotal", ((${taxableExpr}) + (${taxExpr})))`;
+    const { netExpr, discountExpr, taxExpr, lineTotalExpr } = this.lineExprs();
 
     const qb = this.getSaleLineRepo(manager)
       .createQueryBuilder('line')
@@ -1006,19 +1044,7 @@ export class ReportsService {
     const pagination = this.resolvePagination(query.page, query.limit);
     const search = query.search?.trim();
 
-    const netExpr = 'COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)';
-    const discountExpr = `CASE
-      WHEN line."discountAmount" IS NOT NULL THEN line."discountAmount"
-      WHEN line."discountPercent" IS NOT NULL THEN ((${netExpr}) * line."discountPercent" / 100)
-      ELSE 0
-    END`;
-    const taxableExpr = `((${netExpr}) - (${discountExpr}))`;
-    const taxExpr = `CASE
-      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
-      WHEN line."taxPercent" IS NOT NULL THEN ((${taxableExpr}) * line."taxPercent" / 100)
-      ELSE 0
-    END`;
-    const lineTotalExpr = `COALESCE(line."lineTotal", ((${taxableExpr}) + (${taxExpr})))`;
+    const { netExpr, discountExpr, taxExpr, lineTotalExpr } = this.lineExprs();
 
     const qb = this.getSaleLineRepo(manager)
       .createQueryBuilder('line')
@@ -2068,13 +2094,7 @@ export class ReportsService {
     const scope = await this.resolveScopedStoreIds(query.storeIds, manager);
     const { start, end } = this.resolveDateRange(query.startDate, query.endDate);
 
-    const taxExpr = `COALESCE(line."taxPercent", 0)`;
-    const netExpr = `COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)`;
-    const taxAmountExpr = `CASE
-      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
-      WHEN line."taxPercent" IS NOT NULL THEN ((${netExpr}) * line."taxPercent" / 100)
-      ELSE 0
-    END`;
+    const { taxRateExpr: taxExpr, netExpr, taxAmountExpr } = this.vatLineExprs();
 
     const qb = this.getSaleLineRepo(manager)
       .createQueryBuilder('line')
@@ -2140,13 +2160,7 @@ export class ReportsService {
     const monthStart = new Date(Date.UTC(year, month - 1, 1));
     const monthEnd = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
 
-    const taxExpr = `COALESCE(line."taxPercent", 0)`;
-    const netExpr = `COALESCE(line."unitPrice", 0) * COALESCE(line."quantity", 0)`;
-    const taxAmountExpr = `CASE
-      WHEN line."taxAmount" IS NOT NULL THEN line."taxAmount"
-      WHEN line."taxPercent" IS NOT NULL THEN ((${netExpr}) * line."taxPercent" / 100)
-      ELSE 0
-    END`;
+    const { taxRateExpr: taxExpr, netExpr, taxAmountExpr } = this.vatLineExprs();
 
     // Confirmed satislar
     const confirmedQb = this.getSaleLineRepo(manager)

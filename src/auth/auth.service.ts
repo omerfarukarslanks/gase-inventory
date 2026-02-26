@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { ConfigService } from '@nestjs/config';
 import { UsersService } from 'src/user/user.service';
 import { MailService } from 'src/mail/mail.service';
 import { PasswordResetToken } from './password-reset-token';
+import { RefreshToken } from './refresh-token.entity';
 import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
@@ -17,19 +19,59 @@ export interface OAuthUserPayload {
   authProviderId: string;
 }
 
+// Saniye cinsinden parse: '30d' → 2592000, '1h' → 3600
+function parseDurationToMs(value: string): number {
+  const match = value.match(/^(\d+)([smhd])$/);
+  if (!match) return 30 * 24 * 60 * 60 * 1000; // 30 gün default
+  const n = parseInt(match[1], 10);
+  const unit: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
+  return n * unit[match[2]];
+}
+
 @Injectable()
 export class AuthService {
+  private readonly refreshTokenTtlMs: number;
+
   constructor(
     private readonly usersService: UsersService,
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
+    private readonly configService: ConfigService,
     @InjectRepository(PasswordResetToken)
     private readonly tokenRepo: Repository<PasswordResetToken>,
+    @InjectRepository(RefreshToken)
+    private readonly refreshTokenRepo: Repository<RefreshToken>,
     private readonly dataSource: DataSource,
-  ) { }
+  ) {
+    this.refreshTokenTtlMs = parseDurationToMs(
+      this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') ?? '30d',
+    );
+  }
 
   validateUser(email: string, password: string) {
     return this.usersService.validateUser(email, password);
+  }
+
+  private hashToken(token: string) {
+    return createHash('sha256').update(token).digest('hex');
+  }
+
+  private async issueRefreshToken(userId: string, tenantId?: string): Promise<string> {
+    const raw = randomBytes(40).toString('hex');
+    const tokenHash = this.hashToken(raw);
+    const expiresAt = new Date(Date.now() + this.refreshTokenTtlMs);
+    await this.refreshTokenRepo.insert({ userId, tenantId, tokenHash, expiresAt });
+    return raw;
+  }
+
+  private buildLoginPayload(user: any, storeId: string | null, storeType: string | null) {
+    return {
+      sub: user.id,
+      tenantId: user.tenant.id,
+      role: user.role,
+      storeId,
+      storeType,
+    };
   }
 
   async login(email: string, password: string) {
@@ -43,16 +85,15 @@ export class AuthService {
       user.id,
       user.tenant.id,
     );
-    const payload = {
-      sub: user.id,
-      tenantId: user.tenant.id,
-      role: user.role,
-      storeId,
-      storeType,
-    };
+    const payload = this.buildLoginPayload(user, storeId, storeType);
+    const [access_token, refresh_token] = await Promise.all([
+      this.jwtService.signAsync(payload),
+      this.issueRefreshToken(user.id, user.tenant.id),
+    ]);
 
     return {
-      access_token: await this.jwtService.signAsync(payload),
+      access_token,
+      refresh_token,
       user: {
         id: user.id,
         email: user.email,
@@ -82,16 +123,15 @@ export class AuthService {
       user.id,
       user.tenant.id,
     );
-    const payload = {
-      sub: user.id,
-      tenantId: user.tenant.id,
-      role: user.role,
-      storeId,
-      storeType,
-    };
+    const payload = this.buildLoginPayload(user, storeId, storeType);
+    const [access_token, refresh_token] = await Promise.all([
+      this.jwtService.signAsync(payload),
+      this.issueRefreshToken(user.id, user.tenant.id),
+    ]);
 
     return {
-      access_token: await this.jwtService.signAsync(payload),
+      access_token,
+      refresh_token,
       user: {
         id: user.id,
         email: user.email,
@@ -105,8 +145,50 @@ export class AuthService {
     };
   }
 
-  private hashToken(token: string) {
-    return createHash('sha256').update(token).digest('hex');
+  async refresh(rawToken: string) {
+    const tokenHash = this.hashToken(rawToken);
+    const record = await this.refreshTokenRepo.findOne({ where: { tokenHash } });
+
+    if (!record) {
+      throw new UnauthorizedException('Geçersiz refresh token');
+    }
+    if (record.revokedAt) {
+      throw new UnauthorizedException('Refresh token iptal edilmiş');
+    }
+    if (record.expiresAt.getTime() < Date.now()) {
+      throw new UnauthorizedException('Refresh token süresi dolmuş');
+    }
+
+    const user = await this.usersService.findById(record.userId);
+    if (!user || !user.isActive) {
+      throw new UnauthorizedException('Kullanıcı bulunamadı veya aktif değil');
+    }
+
+    const { storeId, storeType } = await this.usersService.getDefaultStoreForUser(
+      user.id,
+      user.tenant.id,
+    );
+
+    // Token rotation: eski token'ı revoke et, yenisini oluştur
+    record.revokedAt = new Date();
+    await this.refreshTokenRepo.save(record);
+
+    const payload = this.buildLoginPayload(user, storeId, storeType);
+    const [access_token, refresh_token] = await Promise.all([
+      this.jwtService.signAsync(payload),
+      this.issueRefreshToken(user.id, record.tenantId),
+    ]);
+
+    return { access_token, refresh_token };
+  }
+
+  async logout(rawToken: string): Promise<void> {
+    const tokenHash = this.hashToken(rawToken);
+    const record = await this.refreshTokenRepo.findOne({ where: { tokenHash } });
+    if (record && !record.revokedAt) {
+      record.revokedAt = new Date();
+      await this.refreshTokenRepo.save(record);
+    }
   }
 
   async requestReset(email: string) {
@@ -128,7 +210,7 @@ export class AuthService {
         expiresAt,
       });
 
-      
+
     // Mail gönderimi transaction dışında: başarısız olsa bile token kaybolmaz
     const resetUrl = `${process.env.APP_WEB_URL}/reset-password?token=${encodeURIComponent(token)}`;
     await this.mailService.sendPasswordResetEmail(user.email, resetUrl);

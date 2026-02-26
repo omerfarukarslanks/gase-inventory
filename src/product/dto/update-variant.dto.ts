@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsNotEmpty, IsOptional, IsString } from 'class-validator';
+import { IsBoolean, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
 
 export class UpdateVariantDto {
   @ApiPropertyOptional({ example: 'Kırmızı / XL' })
@@ -20,6 +20,16 @@ export class UpdateVariantDto {
   })
   @IsOptional()
   attributes?: Record<string, any>;
+
+  @ApiPropertyOptional({
+    example: '8680000000001',
+    description: 'Barkod (EAN-13, QR, vb.) — tenant kapsamında benzersiz olmalı',
+  })
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(64)
+  @IsOptional()
+  barcode?: string;
 
   @ApiPropertyOptional({
     example: true,

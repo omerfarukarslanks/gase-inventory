@@ -21,6 +21,9 @@ export class ProductVariant extends AuditableEntity {
   @Column()
   code: string; // varyant kodu (RENK-BEDEN vs.)
 
+  @Column({ nullable: true })
+  barcode?: string; // EAN-13, QR vb. — tenant kapsamında tekil (servis katmanında validate edilir)
+
   // İleride: renk, beden vb. attribute'leri buraya jsonb ile taşıyabiliriz
   @Column({ type: 'jsonb', nullable: true })
   attributes?: Record<string, any>;

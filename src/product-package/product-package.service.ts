@@ -374,15 +374,12 @@ export class ProductPackageService {
       }
 
       // Ağırlık: product salePrice varsa salePrice×qty, yoksa qty
+      // null percent → 0 olarak dahil edilir; tüm itemlar ağırlık toplamına girer
       const weight = salePrice != null ? salePrice * qty : qty;
-      if (taxPercent != null) {
-        weightedTaxPercent += taxPercent * weight;
-        taxWeightTotal += weight;
-      }
-      if (discountPercent != null) {
-        weightedDiscountPercent += discountPercent * weight;
-        discountWeightTotal += weight;
-      }
+      weightedTaxPercent += (taxPercent ?? 0) * weight;
+      taxWeightTotal += weight;
+      weightedDiscountPercent += (discountPercent ?? 0) * weight;
+      discountWeightTotal += weight;
     }
 
     // Efektif oranlar

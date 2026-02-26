@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { MailModule } from 'src/mail/mail.module';
 import { PasswordResetToken } from './password-reset-token';
+import { RefreshToken } from './refresh-token.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { MicrosoftStrategy } from './strategies/microsoft.strategy';
@@ -20,7 +21,7 @@ import { MicrosoftStrategy } from './strategies/microsoft.strategy';
     ConfigModule,
     PassportModule,
     MailModule,
-    TypeOrmModule.forFeature([PasswordResetToken]),
+    TypeOrmModule.forFeature([PasswordResetToken, RefreshToken]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

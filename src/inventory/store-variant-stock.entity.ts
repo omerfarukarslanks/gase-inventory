@@ -2,9 +2,10 @@ import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { Store } from 'src/store/store.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
-import { Column, Entity, Index, ManyToOne } from 'typeorm';
+import { Check, Column, Entity, Index, ManyToOne } from 'typeorm';
 
 @Entity({ name: 'store_variant_stock' })
+@Check(`"quantity" >= 0`)
 @Index('ux_store_variant_stock_tenant_store_variant', [
   'tenant',
   'store',

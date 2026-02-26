@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository } from 'typeorm';
+import { EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
 
 import { InventoryMovement, MovementType } from './inventory-movement.entity';
 import { ReceiveStockDto } from './dto/receive-stock.dto';
@@ -848,40 +848,23 @@ export class InventoryService {
     return Number(summary.quantity);
   }
 
+  // -------------------------------------------------------------------------
+  // Stok özet sorgusu için paylaşılan yardımcılar
+  // -------------------------------------------------------------------------
+
   /**
-   * Belirli bir store için, variant bazlı stok listesi
-   * (ör: mağazadaki tüm ürünlerin stok listesi)
+   * Her iki stok özet metodunun (getStoreStockSummary / getStockSummary) ortak
+   * JOIN + SELECT zincirini kurar. Çağıran metot tenant/store WHERE koşullarını
+   * ve sıralama/filtre eklemelerini kendi üzerine alır.
    */
-  async getStoreStockSummary(storeId: string, manager?: EntityManager): Promise<
-    {
-      items: {
-        productId: string;
-        productName: string;
-        productVariantId: string;
-        variantName: string;
-        variantCode: string;
-        quantity: number;
-        unitPrice: number | null;
-        purchasePrice: number | null;
-        currency: string;
-        taxPercent: number | null;
-        discountPercent: number | null;
-        discountAmount: number | null;
-        taxAmount: number | null;
-        lineTotal: number | null;
-        isStoreOverride: boolean;
-      }[];
-      totalQuantity: number;
-      storeId: string;
-      storeName: string;
-    }
-  > {
+  private buildVariantStockQb(
+    manager?: EntityManager,
+  ): SelectQueryBuilder<StoreVariantStock> {
     const tenantId = this.getTenantIdOrThrow();
-    const store = await this.getTenantStoreOrThrow(storeId, manager);
     const repo = this.getStockSummaryRepository(manager);
     const sppTableName = this.storeProductPriceRepo.metadata.tableName;
 
-    const rows = await repo
+    return repo
       .createQueryBuilder('s')
       .innerJoin('s.productVariant', 'variant')
       .innerJoin('variant.product', 'product')
@@ -914,36 +897,37 @@ export class InventoryService {
       .addSelect('spp."lineTotal"', 'lineTotal')
       .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
       .where('s.tenantId = :tenantId', { tenantId })
-      .andWhere('s."isActiveStore" = true')
-      .andWhere('s.storeId = :storeId', { storeId })
-      .orderBy('product.name', 'ASC')
-      .addOrderBy('variant.name', 'ASC')
-      .getRawMany<{
-        productId: string;
-        productName: string;
-        productVariantId: string;
-        variantName: string;
-        variantCode: string;
-        storeId: string;
-        storeName: string;
-        quantity: string;
-        unitPrice: string | null;
-        purchasePrice: string | null;
-        currency: string | null;
-        taxPercent: string | null;
-        discountPercent: string | null;
-        discountAmount: string | null;
-        taxAmount: string | null;
-        lineTotal: string | null;
-        isStoreOverride: boolean | string;
-      }>();
+      .andWhere('s."isActiveStore" = true');
+  }
 
-    const items = rows.map((row) => ({
-      productId: row.productId,
-      productName: row.productName,
-      productVariantId: row.productVariantId,
-      variantName: row.variantName,
-      variantCode: row.variantCode,
+  /**
+   * Ham DB satırının sayısal/boolean alanlarını tiplendirir.
+   * Ham string → number dönüşümleri tek yerde yapılır.
+   */
+  private mapStockRow(row: {
+    quantity: string;
+    unitPrice: string | null;
+    purchasePrice: string | null;
+    currency: string | null;
+    taxPercent: string | null;
+    discountPercent: string | null;
+    discountAmount: string | null;
+    taxAmount: string | null;
+    lineTotal: string | null;
+    isStoreOverride: boolean | string;
+  }): {
+    quantity: number;
+    unitPrice: number | null;
+    purchasePrice: number | null;
+    currency: string;
+    taxPercent: number | null;
+    discountPercent: number | null;
+    discountAmount: number | null;
+    taxAmount: number | null;
+    lineTotal: number | null;
+    isStoreOverride: boolean;
+  } {
+    return {
       quantity: Number(row.quantity),
       unitPrice: row.unitPrice !== null ? Number(row.unitPrice) : null,
       purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
@@ -954,6 +938,61 @@ export class InventoryService {
       taxAmount: row.taxAmount !== null ? Number(row.taxAmount) : null,
       lineTotal: row.lineTotal !== null ? Number(row.lineTotal) : null,
       isStoreOverride: row.isStoreOverride === true || row.isStoreOverride === 'true',
+    };
+  }
+
+  /**
+   * Belirli bir store için, variant bazlı stok listesi
+   * (ör: mağazadaki tüm ürünlerin stok listesi)
+   */
+  async getStoreStockSummary(storeId: string, manager?: EntityManager): Promise<
+    {
+      items: {
+        productId: string;
+        productName: string;
+        productVariantId: string;
+        variantName: string;
+        variantCode: string;
+        quantity: number;
+        unitPrice: number | null;
+        purchasePrice: number | null;
+        currency: string;
+        taxPercent: number | null;
+        discountPercent: number | null;
+        discountAmount: number | null;
+        taxAmount: number | null;
+        lineTotal: number | null;
+        isStoreOverride: boolean;
+      }[];
+      totalQuantity: number;
+      storeId: string;
+      storeName: string;
+    }
+  > {
+    const store = await this.getTenantStoreOrThrow(storeId, manager);
+
+    const rows = await this.buildVariantStockQb(manager)
+      .andWhere('s.storeId = :storeId', { storeId })
+      .orderBy('product.name', 'ASC')
+      .addOrderBy('variant.name', 'ASC')
+      .getRawMany<{
+        productId: string; productName: string;
+        productVariantId: string; variantName: string; variantCode: string;
+        storeId: string; storeName: string;
+        quantity: string; unitPrice: string | null; purchasePrice: string | null;
+        currency: string | null; taxPercent: string | null;
+        discountPercent: string | null; discountAmount: string | null;
+        taxAmount: string | null; lineTotal: string | null;
+        isStoreOverride: boolean | string;
+      }>();
+
+    const items = rows.map((row) => ({
+      productId: row.productId,
+      productName: row.productName,
+      productVariantId: row.productVariantId,
+      variantName: row.variantName,
+      variantCode: row.variantCode,
+      ...this.mapStockRow(row),
     }));
 
     return {
@@ -1041,43 +1080,7 @@ export class InventoryService {
       }
     }
 
-    const repo = this.getStockSummaryRepository(manager);
-    const sppTableName = this.storeProductPriceRepo.metadata.tableName;
-
-    const qb = repo
-      .createQueryBuilder('s')
-      .innerJoin('s.productVariant', 'variant')
-      .innerJoin('variant.product', 'product')
-      .innerJoin('s.store', 'store')
-      .leftJoin(
-        sppTableName,
-        'spp',
-        [
-          'spp."tenantId" = s."tenantId"',
-          'spp."storeId" = s."storeId"',
-          'spp."productVariantId" = s."productVariantId"',
-          'spp."isActive" = true',
-        ].join(' AND '),
-      )
-      .select('product.id', 'productId')
-      .addSelect('product.name', 'productName')
-      .addSelect('s.productVariantId', 'productVariantId')
-      .addSelect('variant.name', 'variantName')
-      .addSelect('variant.code', 'variantCode')
-      .addSelect('store.id', 'storeId')
-      .addSelect('store.name', 'storeName')
-      .addSelect('s.quantity', 'quantity')
-      .addSelect('COALESCE(spp."salePrice", variant."defaultSalePrice")', 'unitPrice')
-      .addSelect('COALESCE(spp."purchasePrice", variant."defaultPurchasePrice")', 'purchasePrice')
-      .addSelect('COALESCE(spp."currency", variant."defaultCurrency", \'TRY\')', 'currency')
-      .addSelect('COALESCE(spp."taxPercent", variant."defaultTaxPercent")', 'taxPercent')
-      .addSelect('spp."discountPercent"', 'discountPercent')
-      .addSelect('spp."discountAmount"', 'discountAmount')
-      .addSelect('spp."taxAmount"', 'taxAmount')
-      .addSelect('spp."lineTotal"', 'lineTotal')
-      .addSelect('CASE WHEN spp."id" IS NULL THEN false ELSE true END', 'isStoreOverride')
-      .where('s.tenantId = :tenantId', { tenantId })
-      .andWhere('s."isActiveStore" = true');
+    const qb = this.buildVariantStockQb(manager);
 
     if (requestedStoreIds.length) {
       qb.andWhere('s.storeId IN (:...storeIds)', { storeIds: requestedStoreIds });
@@ -1095,22 +1098,13 @@ export class InventoryService {
       .addOrderBy('variant.name', 'ASC')
       .addOrderBy('store.name', 'ASC')
       .getRawMany<{
-        productId: string;
-        productName: string;
-        productVariantId: string;
-        variantName: string;
-        variantCode: string;
-        storeId: string;
-        storeName: string;
-        quantity: string;
-        unitPrice: string | null;
-        purchasePrice: string | null;
-        currency: string | null;
-        taxPercent: string | null;
-        discountPercent: string | null;
-        discountAmount: string | null;
-        taxAmount: string | null;
-        lineTotal: string | null;
+        productId: string; productName: string;
+        productVariantId: string; variantName: string; variantCode: string;
+        storeId: string; storeName: string;
+        quantity: string; unitPrice: string | null; purchasePrice: string | null;
+        currency: string | null; taxPercent: string | null;
+        discountPercent: string | null; discountAmount: string | null;
+        taxAmount: string | null; lineTotal: string | null;
         isStoreOverride: boolean | string;
       }>();
 
@@ -1178,17 +1172,8 @@ export class InventoryService {
       variantItem.stores.push({
         storeId: row.storeId,
         storeName: row.storeName,
-        quantity,
         totalQuantity: quantity,
-        unitPrice: row.unitPrice !== null ? Number(row.unitPrice) : null,
-        purchasePrice: row.purchasePrice !== null ? Number(row.purchasePrice) : null,
-        currency: row.currency ?? 'TRY',
-        taxPercent: row.taxPercent !== null ? Number(row.taxPercent) : null,
-        discountPercent: row.discountPercent !== null ? Number(row.discountPercent) : null,
-        discountAmount: row.discountAmount !== null ? Number(row.discountAmount) : null,
-        taxAmount: row.taxAmount !== null ? Number(row.taxAmount) : null,
-        lineTotal: row.lineTotal !== null ? Number(row.lineTotal) : null,
-        isStoreOverride: row.isStoreOverride === true || row.isStoreOverride === 'true',
+        ...this.mapStockRow(row),
       });
     }
 

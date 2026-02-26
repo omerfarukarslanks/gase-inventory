@@ -10,8 +10,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
   UseGuards,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { SalesService } from './sales.service';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
@@ -23,6 +25,7 @@ import { UpdateSaleDto } from './dto/update-sale.dto';
 import { CancelSaleDto } from './dto/cancel-sale.dto';
 import { AddPaymentDto } from './dto/add-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
+import { CreateSaleReturnDto } from './dto/create-sale-return.dto';
 
 @ApiTags('Sales')
 @ApiBearerAuth('access-token')
@@ -99,5 +102,39 @@ export class SalesController {
     @Param('paymentId', ParseUUIDPipe) paymentId: string,
   ) {
     return this.salesService.deletePayment(id, paymentId);
+  }
+
+  // ---- Kısmi İade ----
+
+  @Post(':id/returns')
+  @ApiOperation({
+    summary: 'Satıştan kısmi iade oluştur — seçili satırları belirtilen miktarda iade eder, stoklar geri yüklenir',
+  })
+  createReturn(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateSaleReturnDto,
+  ) {
+    return this.salesService.createSaleReturn(id, dto);
+  }
+
+  @Get(':id/returns')
+  @ApiOperation({ summary: 'Satışa ait tüm iade kayıtlarını listele' })
+  listReturns(@Param('id', ParseUUIDPipe) id: string) {
+    return this.salesService.listSaleReturns(id);
+  }
+
+  // ---- PDF Fiş ----
+
+  @Get(':id/receipt')
+  @ApiOperation({ summary: 'Satış fişini PDF olarak indir (80mm termal yazıcı formatı)' })
+  async downloadReceipt(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Res() res: Response,
+  ) {
+    const { buffer, receiptNo } = await this.salesService.generateReceipt(id);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="receipt-${receiptNo}.pdf"`);
+    res.setHeader('Content-Length', buffer.length);
+    res.end(buffer);
   }
 }

@@ -56,4 +56,13 @@ export class UpdateProductDto extends PriceFieldsDto {
   @IsOptional()
   @IsUUID('4')
   supplierId?: string | null;
+
+  @ApiPropertyOptional({
+    description: 'Kategori ID (null göndererek kategorisiz yapabilirsiniz)',
+    example: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID('4')
+  categoryId?: string | null;
 }

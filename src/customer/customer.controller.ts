@@ -63,4 +63,12 @@ export class CustomerController {
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.customerService.remove(id);
   }
+
+  @Get(':id/balance')
+  @ApiOperation({
+    summary: 'Müşteri cari bakiyesi — toplam satış, ödeme, iade ve kalan borç',
+  })
+  getBalance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.customerService.getCustomerBalance(id);
+  }
 }

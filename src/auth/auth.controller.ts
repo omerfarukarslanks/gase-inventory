@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { UsersService } from 'src/user/user.service';
 import { SignupTenantDto } from './dto/signup-tenant.dto';
 import { LoginDto } from './dto/login.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
 import { ForgotPasswordDto, ResetPasswordDto } from './dto/refresh-password.dto';
 import { GoogleAuthGuard } from './guards/google-auth.guard';
@@ -28,6 +29,17 @@ export class AuthController {
   @Post('login')
   async login(@Body() dto: LoginDto) {
     return this.authService.login(dto.email, dto.password);
+  }
+
+  @Post('refresh')
+  async refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto.refresh_token);
+  }
+
+  @Post('logout')
+  @HttpCode(204)
+  async logout(@Body() dto: RefreshTokenDto) {
+    await this.authService.logout(dto.refresh_token);
   }
 
   @Post('forgot-password')

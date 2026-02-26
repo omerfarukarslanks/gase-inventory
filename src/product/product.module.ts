@@ -10,6 +10,9 @@ import { Store } from 'src/store/store.entity';
 import { StoreVariantStock } from 'src/inventory/store-variant-stock.entity';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
+import { ProductCategory } from './product-category.entity';
+import { ProductCategoryService } from './product-category.service';
+import { ProductCategoryController } from './product-category.controller';
 
 @Module({
   imports: [
@@ -22,10 +25,11 @@ import { Supplier } from 'src/supplier/supplier.entity';
       StoreVariantStock,
       StoreProductPrice,
       Supplier,
+      ProductCategory,
     ]),
   ],
-  providers: [ProductService],
-  controllers: [ProductController],
-  exports: [ProductService],
+  providers: [ProductService, ProductCategoryService],
+  controllers: [ProductController, ProductCategoryController],
+  exports: [ProductService, ProductCategoryService],
 })
 export class ProductModule {}

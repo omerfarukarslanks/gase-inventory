@@ -369,6 +369,7 @@ export class ProductService {
       storeIds,
       applyToAllStores,
       supplierId,
+      categoryId,
       currency,
       purchasePrice,
       unitPrice,
@@ -397,6 +398,7 @@ export class ProductService {
         lineTotal,
       }),
       ...(supplierId ? { supplier: { id: supplierId } as any } : {}),
+      ...(categoryId ? { category: { id: categoryId } as any } : {}),
       tenant: { id: tenantId } as any,
       createdById: userId,
       updatedById: userId,
@@ -772,6 +774,7 @@ export class ProductService {
       storeIds,
       applyToAllStores,
       supplierId,
+      categoryId,
       currency,
       purchasePrice,
       unitPrice,
@@ -804,7 +807,7 @@ export class ProductService {
       hasStoreStateChange = true;
     }
 
-    if (Object.keys(restDto).length === 0 && supplierId === undefined) {
+    if (Object.keys(restDto).length === 0 && supplierId === undefined && categoryId === undefined) {
       const hasPriceUpdate =
         currency !== undefined ||
         purchasePrice !== undefined ||
@@ -830,10 +833,18 @@ export class ProductService {
       supplierUpdate = { supplier: { id: supplierId } as any };
     }
 
+    let categoryUpdate: Record<string, unknown> = {};
+    if (categoryId === null) {
+      categoryUpdate = { category: null };
+    } else if (categoryId !== undefined) {
+      categoryUpdate = { category: { id: categoryId } as any };
+    }
+
     Object.assign(
       product,
       restDto,
       supplierUpdate,
+      categoryUpdate,
       this.getUpdateProductPriceDefaults({
         currency,
         purchasePrice,
@@ -1330,9 +1341,24 @@ export class ProductService {
     const tokenStoreId = this.appContext.getStoreId();
     const {
       isActive: nextIsActive,
+      barcode,
       ...restDto
     } = dto;
     const variant = await this.findVariantByProductOrThrow(productId, variantId, manager);
+
+    if (barcode !== undefined) {
+      const tenantId = this.appContext.getTenantIdOrThrow();
+      const duplicate = await repo
+        .createQueryBuilder('v')
+        .innerJoin('v.product', 'p')
+        .where('p.tenantId = :tenantId', { tenantId })
+        .andWhere('v.barcode = :barcode', { barcode })
+        .andWhere('v.id != :id', { id: variant.id })
+        .getOne();
+      if (duplicate) {
+        throw new BadRequestException(`Barkod '${barcode}' bu tenant'ta zaten kullanımda`);
+      }
+    }
 
     if (nextIsActive !== undefined) {
       if (tokenStoreId) {
@@ -1343,16 +1369,35 @@ export class ProductService {
       }
     }
 
-    if (Object.keys(restDto).length === 0) {
+    if (Object.keys(restDto).length === 0 && barcode === undefined) {
       return variant;
     }
 
     const userId = this.appContext.getUserIdOrThrow();
-    Object.assign(variant, restDto, {
+    Object.assign(variant, { ...restDto, ...(barcode !== undefined ? { barcode } : {}) }, {
       updatedById: userId,
     });
 
     return repo.save(variant);
+  }
+
+  async lookupByBarcode(barcode: string): Promise<ProductVariant> {
+    if (!barcode) {
+      throw new BadRequestException('barcode query param zorunludur');
+    }
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const repo = this.getVariantRepo();
+    const variant = await repo
+      .createQueryBuilder('v')
+      .innerJoinAndSelect('v.product', 'p')
+      .where('p.tenantId = :tenantId', { tenantId })
+      .andWhere('v.barcode = :barcode', { barcode })
+      .getOne();
+
+    if (!variant) {
+      throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
+    }
+    return variant;
   }
 
   async removeVariant(
