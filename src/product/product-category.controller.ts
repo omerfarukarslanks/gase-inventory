@@ -17,6 +17,7 @@ import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { ProductCategoryService } from './product-category.service';
 import { CreateProductCategoryDto } from './dto/create-product-category.dto';
 import { UpdateProductCategoryDto } from './dto/update-product-category.dto';
+import { ListProductCategoriesQueryDto } from './dto/list-product-categories.dto';
 
 @ApiTags('Product Categories')
 @ApiBearerAuth('access-token')
@@ -32,9 +33,12 @@ export class ProductCategoryController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Kategorileri düz liste olarak getir' })
-  findAll(@Query('includeInactive') includeInactive?: string) {
-    return this.categoryService.findAll(includeInactive === 'true');
+  @ApiOperation({
+    summary:
+      'Kategorileri listele (page/limit verilirse sayfali doner, verilmezse tum listeyi doner)',
+  })
+  findAll(@Query() query: ListProductCategoriesQueryDto) {
+    return this.categoryService.findAll(query);
   }
 
   @Get('tree')

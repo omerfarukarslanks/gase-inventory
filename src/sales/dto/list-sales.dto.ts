@@ -12,7 +12,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
-import { Sale, SaleStatus } from '../sale.entity';
+import { PaymentStatus, Sale, SaleStatus } from '../sale.entity';
 
 export class ListSalesForStoreQueryDto {
   @ApiPropertyOptional({
@@ -96,6 +96,11 @@ export class ListSalesForStoreQueryDto {
   @IsOptional()
   @IsEnum(SaleStatus)
   status?: SaleStatus;
+
+  @ApiPropertyOptional({ description: 'Odeme durum filtresi', enum: PaymentStatus })
+  @IsOptional()
+  @IsEnum(PaymentStatus)
+  paymentStatus?: PaymentStatus;
 
   @ApiPropertyOptional({ description: 'Toplam birim fiyat alt sınırı', example: 1000 })
   @IsOptional()

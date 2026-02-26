@@ -31,6 +31,7 @@ import { StoreErrors } from 'src/common/errors/store.errors';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
 import { SupplierErrors } from 'src/common/errors/supplier.errors';
+import { ProductCategory } from './product-category.entity';
 
 type ResolvedAttributeGroup = {
   attributeId: string;
@@ -706,6 +707,14 @@ export class ProductService {
       ])
       .leftJoin('product.supplier', 'supplier')
       .addSelect('supplier.id')
+      .leftJoin('product.category', 'category')
+      .addSelect([
+        'category.id',
+        'category.name',
+        'category.slug',
+        'category.description',
+        'category.isActive',
+      ])
       .where('product.id = :id', { id })
       .andWhere('product.tenantId = :tenantId', { tenantId })
       .loadRelationCountAndMap('product.variantCount', 'product.variants')
@@ -762,6 +771,8 @@ export class ProductService {
     const activeRow = await activeQb.getRawOne<{ hasActiveStoreRow: string | null }>();
     product.isActive = Number(activeRow?.hasActiveStoreRow ?? 0) > 0;
     await this.attachProductScopeAndPriceFields([product], manager);
+    (product as ProductResponseShape).categoryId =
+      (product.category as ProductCategory | null)?.id ?? null;
     return product as Product;
   }
 

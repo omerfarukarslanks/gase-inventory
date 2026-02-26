@@ -26,6 +26,8 @@ import { CancelSaleDto } from './dto/cancel-sale.dto';
 import { AddPaymentDto } from './dto/add-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { CreateSaleReturnDto } from './dto/create-sale-return.dto';
+import { PatchSaleLineDto } from './dto/patch-sale-line.dto';
+import { CreateSaleLineDto } from './dto/create-sale-line.dto';
 
 @ApiTags('Sales')
 @ApiBearerAuth('access-token')
@@ -102,6 +104,42 @@ export class SalesController {
     @Param('paymentId', ParseUUIDPipe) paymentId: string,
   ) {
     return this.salesService.deletePayment(id, paymentId);
+  }
+
+  // ---- Satır düzenleme (cerrahi) ----
+
+  @Post(':id/lines')
+  @ApiOperation({ summary: 'Mevcut satış fişine yeni satır ekle ve stok düş' })
+  addSaleLine(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: CreateSaleLineDto,
+  ) {
+    return this.salesService.addSaleLine(id, dto);
+  }
+
+  @Patch(':id/lines/:lineId')
+  @ApiOperation({
+    summary:
+      'Satış satırını cerrahi güncelle — quantity değişirse stok farkı otomatik ayarlanır; ürün kimliği değiştirilemez',
+  })
+  updateSaleLine(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('lineId', ParseUUIDPipe) lineId: string,
+    @Body() dto: PatchSaleLineDto,
+  ) {
+    return this.salesService.updateSaleLine(id, lineId, dto);
+  }
+
+  @Delete(':id/lines/:lineId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({
+    summary: 'Satış satırını sil — stok iade edilir, satış toplamları güncellenir (son satır ve iade olan satır silinemez)',
+  })
+  removeSaleLine(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('lineId', ParseUUIDPipe) lineId: string,
+  ) {
+    return this.salesService.removeSaleLine(id, lineId);
   }
 
   // ---- Kısmi İade ----

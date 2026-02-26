@@ -10,6 +10,10 @@ import { AppContextService } from 'src/common/context/app-context.service';
 import { CreateProductCategoryDto } from './dto/create-product-category.dto';
 import { UpdateProductCategoryDto } from './dto/update-product-category.dto';
 import { slugify } from 'src/common/utils/slugify';
+import {
+  ListProductCategoriesQueryDto,
+  PaginatedProductCategoriesResponse,
+} from './dto/list-product-categories.dto';
 
 @Injectable()
 export class ProductCategoryService {
@@ -43,8 +47,12 @@ export class ProductCategoryService {
     return this.categoryRepo.save(category);
   }
 
-  async findAll(includeInactive = false): Promise<ProductCategory[]> {
+  async findAll(
+    query: ListProductCategoriesQueryDto,
+  ): Promise<PaginatedProductCategoriesResponse | { data: ProductCategory[]; total: number }> {
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const isActive = query.isActive;
+    const search = query.search?.trim();
 
     const qb = this.categoryRepo
       .createQueryBuilder('cat')
@@ -52,11 +60,40 @@ export class ProductCategoryService {
       .where('cat.tenantId = :tenantId', { tenantId })
       .orderBy('cat.name', 'ASC');
 
-    if (!includeInactive) {
-      qb.andWhere('cat.isActive = true');
+      if (isActive !== undefined && isActive !== 'all') {
+        qb.andWhere('cat.isActive = :isActive', { isActive });
+      }
+    
+      
+
+    if (search) {
+      qb.andWhere(
+        '(cat.name ILIKE :search OR cat.slug ILIKE :search OR cat.description ILIKE :search OR parent.name ILIKE :search)',
+        { search: `%${search}%` },
+      );
     }
 
-    return qb.getMany();
+    if (!query.hasPagination) {
+      const data = await qb.getMany();
+      return { data, total: data.length };
+    }
+
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 10;
+
+    qb.skip(query.skip).take(limit);
+
+    const [data, total] = await qb.getManyAndCount();
+
+    return {
+      data,
+      meta: {
+        total,
+        limit,
+        page,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
   }
 
   async findTree(): Promise<ProductCategory[]> {

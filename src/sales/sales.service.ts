@@ -86,6 +86,96 @@ export class SalesService {
     return manager ? manager.getRepository(SalePayment) : this.salePaymentRepo;
   }
 
+  private getSaleReturnLineRepo(manager?: EntityManager): Repository<SaleReturnLine> {
+    return manager ? manager.getRepository(SaleReturnLine) : this.saleReturnLineRepo;
+  }
+
+  private toSafeNumber(value: unknown): number {
+    const numeric = Number(value ?? 0);
+    if (!Number.isFinite(numeric)) {
+      return 0;
+    }
+    return Math.abs(numeric) < 1e-9 ? 0 : numeric;
+  }
+
+  private computeSaleLineAmountsForQuantity(
+    line: Pick<SaleLine, 'quantity' | 'unitPrice' | 'discountPercent' | 'discountAmount' | 'taxPercent' | 'taxAmount'>,
+    targetQuantity: number,
+  ): {
+    quantity: number;
+    unitPrice: number;
+    net: number;
+    lineTotal: number;
+    discountPercent: number | null;
+    discountAmount: number | null;
+    taxPercent: number | null;
+    taxAmount: number | null;
+  } {
+    const currentQuantity = this.toSafeNumber(line.quantity);
+    const quantity = Math.max(0, this.toSafeNumber(targetQuantity));
+    const unitPrice = this.toSafeNumber(line.unitPrice);
+
+    const discountPercent =
+      line.discountPercent != null ? this.toSafeNumber(line.discountPercent) : null;
+    const taxPercent =
+      line.taxPercent != null ? this.toSafeNumber(line.taxPercent) : null;
+
+    const ratio = currentQuantity > 0 ? quantity / currentQuantity : 0;
+
+    const discountAmountInput =
+      discountPercent != null
+        ? null
+        : (line.discountAmount != null
+          ? this.toSafeNumber(line.discountAmount) * ratio
+          : null);
+
+    const taxAmountInput =
+      taxPercent != null
+        ? null
+        : (line.taxAmount != null
+          ? this.toSafeNumber(line.taxAmount) * ratio
+          : null);
+
+    const calculated = calculateLineAmounts({
+      quantity,
+      unitPrice,
+      discountPercent,
+      discountAmount: discountAmountInput,
+      taxPercent,
+      taxAmount: taxAmountInput,
+    });
+
+    return {
+      quantity,
+      unitPrice,
+      net: this.toSafeNumber(calculated.net),
+      lineTotal: this.toSafeNumber(calculated.lineTotal),
+      discountPercent,
+      discountAmount: discountPercent != null
+        ? null
+        : (discountAmountInput != null ? this.toSafeNumber(discountAmountInput) : null),
+      taxPercent,
+      taxAmount: taxPercent != null
+        ? null
+        : (taxAmountInput != null ? this.toSafeNumber(taxAmountInput) : null),
+    };
+  }
+
+  private recomputeSaleTotalsFromLines(lines: SaleLine[]): { unitPrice: number; lineTotal: number } {
+    let unitPrice = 0;
+    let lineTotal = 0;
+
+    for (const line of lines) {
+      unitPrice += this.toSafeNumber(line.unitPrice) * this.toSafeNumber(line.quantity);
+      lineTotal += this.toSafeNumber(line.lineTotal);
+    }
+
+    return {
+      unitPrice: this.toSafeNumber(unitPrice),
+      lineTotal: this.toSafeNumber(lineTotal),
+    };
+  }
+
   private computePaymentStatus(paidAmount: number, lineTotal: number): PaymentStatus {
     const paid = Number(paidAmount || 0);
     const total = Number(lineTotal || 0);
@@ -579,23 +669,14 @@ export class SalesService {
     id: string,
     dto: UpdateSaleDto,
     manager: EntityManager,
-  ): Promise<any> {
+  ): Promise<Sale> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
 
     const saleRepo = manager.getRepository(Sale);
-    const saleLineRepo = manager.getRepository(SaleLine);
 
     const sale = await saleRepo.findOne({
       where: { id, tenant: { id: tenantId } },
-      relations: [
-        'store',
-        'lines',
-        'lines.productVariant',
-        'lines.productPackage',
-        'lines.productPackage.items',
-        'lines.productPackage.items.productVariant',
-      ],
     });
 
     if (!sale) {
@@ -612,117 +693,9 @@ export class SalesService {
       const customer = await this.getTenantCustomerOrThrow(dto.customerId, manager);
       sale.customer = { id: customer.id } as any;
     }
+
     if (dto.meta !== undefined) {
       sale.meta = dto.meta;
-    }
-
-    if (dto.lines !== undefined) {
-      if (dto.lines.length === 0) {
-        throw new BadRequestException(SalesErrors.SALE_MUST_HAVE_LINES);
-      }
-
-      // 1) Eski satirlari stok olarak iade et (IN) — paket satırlar da dahil
-      for (const oldLine of sale.lines ?? []) {
-        await this.returnLineStock(oldLine, sale.id, sale.store.id, manager);
-      }
-
-      // 2) Eski satirlari sil ve yeni satirlari yeniden yaz
-      await saleLineRepo
-        .createQueryBuilder()
-        .delete()
-        .from(SaleLine)
-        .where('saleId = :saleId', { saleId: sale.id })
-        .execute();
-
-      // Satır validasyonu
-      for (const l of dto.lines) {
-        if (!l.productVariantId && !l.productPackageId) {
-          throw new BadRequestException('Her satır için productVariantId veya productPackageId gönderilmelidir.');
-        }
-        if (l.productVariantId && l.productPackageId) {
-          throw new BadRequestException('Bir satırda hem productVariantId hem productPackageId olamaz.');
-        }
-      }
-
-      const variantIds = [...new Set(
-        dto.lines
-          .filter((l) => l.productVariantId)
-          .map((l) => l.productVariantId!),
-      )];
-
-      const variants = variantIds.length > 0
-        ? await manager.getRepository(ProductVariant).find({
-            where: {
-              id: In(variantIds),
-              product: { tenant: { id: tenantId } },
-            },
-            relations: ['product', 'product.tenant'],
-          })
-        : [];
-
-      if (variants.length !== variantIds.length) {
-        throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
-      }
-
-      const variantMap = new Map<string, ProductVariant>(
-        variants.map((variant) => [variant.id, variant]),
-      );
-
-      const effectivePrices = variantIds.length > 0
-        ? await this.priceService.getEffectiveSaleParamsForStoreBulk(
-            sale.store.id,
-            variantIds,
-            manager,
-          )
-        : new Map();
-
-      let totalUnitPrice = 0;
-      let totalLineTotal = 0;
-      const saleCurrencies = new Set<string>();
-
-      // Yeni satış satırı ile referans satışı oluştur
-      const referenceSale = { id: sale.id, receiptNo: sale.receiptNo } as Sale;
-
-      for (const lineDto of dto.lines) {
-        if (lineDto.productPackageId) {
-          // --- Paket satır ---
-          const { net, lineTotal, currency } = await this.createPackageLineAndDeductStock(
-            lineDto as any,
-            referenceSale,
-            sale.store,
-            tenantId,
-            userId,
-            manager,
-          );
-          totalUnitPrice += net;
-          totalLineTotal += lineTotal;
-          saleCurrencies.add(currency);
-        } else {
-          // --- Tekil variant satır ---
-          const variantId = lineDto.productVariantId!;
-          const variant = variantMap.get(variantId)!;
-          const { net, lineTotal, currency } = await this.processVariantLine(
-            { ...lineDto, productVariantId: variantId },
-            effectivePrices.get(variantId),
-            variant,
-            sale.id,
-            sale.receiptNo,
-            sale.store.id,
-            userId,
-            true,
-            manager,
-          );
-          saleCurrencies.add(currency);
-          totalUnitPrice += net;
-          totalLineTotal += lineTotal;
-        }
-      }
-
-      sale.unitPrice = totalUnitPrice;
-      sale.lineTotal = totalLineTotal;
-      sale.currency =
-        saleCurrencies.size === 1 ? Array.from(saleCurrencies)[0] : null;
-      sale.paymentStatus = this.computePaymentStatus(sale.paidAmount ?? 0, totalLineTotal);
     }
 
     sale.updatedById = userId;
@@ -839,6 +812,10 @@ export class SalesService {
       recalculatedPaidAmount,
       Number(sale.lineTotal || 0),
     );
+    const returnedByLineId = await this.getAlreadyReturnedQuantities(
+      sale.id,
+      manager,
+    );
 
     return {
       id: sale.id,
@@ -899,6 +876,10 @@ export class SalesService {
             }
           : null,
         quantity: String(line.quantity ?? 0),
+        originalQuantity: String(
+          this.toSafeNumber(line.quantity) + (returnedByLineId.get(line.id) ?? 0),
+        ),
+        returnedQuantity: String(returnedByLineId.get(line.id) ?? 0),
         currency: line.currency ?? null,
         unitPrice: line.unitPrice != null ? String(line.unitPrice) : null,
         discountPercent: line.discountPercent != null ? String(line.discountPercent) : null,
@@ -1002,6 +983,12 @@ export class SalesService {
 
     if (query.status) {
       qb.andWhere('sale.status = :status', { status: query.status });
+    }
+
+    if (query.paymentStatus) {
+      qb.andWhere('sale.paymentStatus = :paymentStatus', {
+        paymentStatus: query.paymentStatus,
+      });
     }
 
     if (
@@ -1361,31 +1348,71 @@ export class SalesService {
   async createSaleReturn(saleId: string, dto: CreateSaleReturnDto): Promise<SaleReturn> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const userId = this.appContext.getUserIdOrThrow();
+    const requestedLineIds = dto.lines.map((line) => line.saleLineId);
+    const duplicateSaleLineIds = requestedLineIds.filter(
+      (lineId, index) => requestedLineIds.indexOf(lineId) !== index,
+    );
+
+    if (duplicateSaleLineIds.length > 0) {
+      const uniqueDuplicateIds = Array.from(new Set(duplicateSaleLineIds));
+      throw new BadRequestException(
+        `Aynı saleLineId bir request içinde birden fazla kez gönderilemez: ${uniqueDuplicateIds.join(', ')}`,
+      );
+    }
 
     return this.dataSource.transaction(async (manager) => {
-      const sale = await manager.getRepository(Sale).findOne({
-        where: { id: saleId, tenant: { id: tenantId } },
-        relations: [
-          'store',
-          'lines',
-          'lines.productVariant',
-          'lines.productPackage',
-          'lines.productPackage.items',
-          'lines.productPackage.items.productVariant',
-        ],
-      });
+      const saleRepo = manager.getRepository(Sale);
+      const saleLineRepo = manager.getRepository(SaleLine);
+      const returnLineRepo = manager.getRepository(SaleReturnLine);
+      const saleReturnRepo = manager.getRepository(SaleReturn);
 
-      if (!sale) throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
-      if (sale.status !== SaleStatus.CONFIRMED) {
+      const lockedSale = await saleRepo
+        .createQueryBuilder('sale')
+        .where('sale.id = :saleId', { saleId })
+        .andWhere('sale.tenantId = :tenantId', { tenantId })
+        .setLock('pessimistic_write')
+        .getOne();
+
+      if (!lockedSale) {
+        throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+      }
+
+      if (lockedSale.status !== SaleStatus.CONFIRMED) {
         throw new BadRequestException('Yalnızca CONFIRMED durumdaki satışlarda iade yapılabilir.');
       }
 
-      // Her satırda kaç adet daha iade edilebileceğini hesapla
-      const alreadyReturnedMap = await this.getAlreadyReturnedQuantities(saleId, manager);
+      const sale = await saleRepo.findOne({
+        where: { id: saleId, tenant: { id: tenantId } },
+        relations: ['store'],
+      });
 
-      const lineMap = new Map(sale.lines.map((l) => [l.id, l]));
+      if (!sale) {
+        throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+      }
+
+      const lockedLineRows = await saleLineRepo
+        .createQueryBuilder('line')
+        .select('line.id', 'id')
+        .where('line.saleId = :saleId', { saleId })
+        .setLock('pessimistic_write')
+        .getRawMany<{ id: string }>();
+
+      const saleLineIds = lockedLineRows.map((row) => row.id);
+      const saleLines =
+        saleLineIds.length > 0
+          ? await saleLineRepo.find({
+              where: { id: In(saleLineIds) },
+              relations: [
+                'productVariant',
+                'productPackage',
+                'productPackage.items',
+                'productPackage.items.productVariant',
+              ],
+            })
+          : [];
+
+      const lineMap = new Map(saleLines.map((line) => [line.id, line]));
       let totalRefund = 0;
-
       const returnLineEntities: SaleReturnLine[] = [];
 
       for (const item of dto.lines) {
@@ -1394,20 +1421,28 @@ export class SalesService {
           throw new BadRequestException(`Satır ${item.saleLineId} bu satışa ait değil.`);
         }
 
-        const alreadyReturned = alreadyReturnedMap.get(item.saleLineId) ?? 0;
-        const maxReturnable = Number(saleLine.quantity) - alreadyReturned;
+        const returnQuantity = this.toSafeNumber(item.quantity);
+        if (returnQuantity <= 0) {
+          throw new BadRequestException(`Satır ${item.saleLineId}: iade miktarı 0'dan büyük olmalıdır.`);
+        }
 
-        if (item.quantity > maxReturnable) {
+        const currentQuantity = this.toSafeNumber(saleLine.quantity);
+        if (returnQuantity > currentQuantity) {
           throw new BadRequestException(
-            `Satır ${item.saleLineId}: iade miktarı (${item.quantity}) izin verilenin üzerinde (${maxReturnable}).`,
+            `Satır ${item.saleLineId}: iade miktarı (${returnQuantity}) izin verilenin üzerinde (${currentQuantity}).`,
           );
         }
+
+        const returnAmounts = this.computeSaleLineAmountsForQuantity(
+          saleLine,
+          returnQuantity,
+        );
 
         // Stok iadesi
         if (saleLine.productPackage) {
           const pkg = saleLine.productPackage as ProductPackage;
           for (const pkgItem of pkg.items ?? []) {
-            const returnQty = item.quantity * Number(pkgItem.quantity);
+            const returnQty = returnQuantity * Number(pkgItem.quantity);
             await this.inventoryService.createReturnMovementForSaleLine(
               {
                 saleId,
@@ -1429,35 +1464,59 @@ export class SalesService {
               saleLineId: saleLine.id,
               storeId: sale.store.id,
               productVariantId: saleLine.productVariant.id,
-              quantity: item.quantity,
+              quantity: returnQuantity,
               currency: saleLine.currency,
-              unitPrice: saleLine.unitPrice,
-              discountPercent: saleLine.discountPercent,
-              discountAmount: saleLine.discountAmount,
-              taxPercent: saleLine.taxPercent,
-              taxAmount: saleLine.taxAmount,
-              lineTotal: saleLine.lineTotal,
+              unitPrice: returnAmounts.unitPrice,
+              discountPercent: returnAmounts.discountPercent ?? undefined,
+              discountAmount: returnAmounts.discountAmount ?? undefined,
+              taxPercent: returnAmounts.taxPercent ?? undefined,
+              taxAmount: returnAmounts.taxAmount ?? undefined,
+              lineTotal: returnAmounts.lineTotal,
               campaignCode: saleLine.campaignCode,
             },
             manager,
           );
         }
 
-        totalRefund += item.refundAmount ?? 0;
+        const remainingQuantity = currentQuantity - returnQuantity;
+        const remainingAmounts = this.computeSaleLineAmountsForQuantity(
+          saleLine,
+          remainingQuantity,
+        );
 
-        const returnLine = manager.getRepository(SaleReturnLine).create({
+        saleLine.quantity = remainingAmounts.quantity;
+        saleLine.unitPrice = remainingAmounts.unitPrice;
+        saleLine.discountPercent = remainingAmounts.discountPercent ?? undefined;
+        saleLine.discountAmount = remainingAmounts.discountAmount ?? undefined;
+        saleLine.taxPercent = remainingAmounts.taxPercent ?? undefined;
+        saleLine.taxAmount = remainingAmounts.taxAmount ?? undefined;
+        saleLine.lineTotal = remainingAmounts.lineTotal;
+        saleLine.updatedById = userId;
+        await saleLineRepo.save(saleLine);
+
+        totalRefund += this.toSafeNumber(item.refundAmount);
+
+        const returnLine = returnLineRepo.create({
           saleLine: { id: saleLine.id } as any,
-          quantity: item.quantity,
-          refundAmount: item.refundAmount ?? 0,
+          quantity: returnQuantity,
+          refundAmount: this.toSafeNumber(item.refundAmount),
           createdById: userId,
           updatedById: userId,
         });
         returnLineEntities.push(returnLine);
       }
 
+      const totals = this.recomputeSaleTotalsFromLines(saleLines);
+      sale.unitPrice = totals.unitPrice;
+      sale.lineTotal = totals.lineTotal;
+      sale.paidAmount = await this.recalcPaidAmount(saleId);
+      sale.paymentStatus = this.computePaymentStatus(sale.paidAmount, sale.lineTotal);
+      sale.updatedById = userId;
+      await saleRepo.save(sale);
+
       const returnNo = `RET-${saleId.replace(/-/g, '').slice(0, 8).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
 
-      const saleReturn = manager.getRepository(SaleReturn).create({
+      const saleReturn = saleReturnRepo.create({
         tenant: { id: tenantId } as any,
         sale: { id: saleId } as any,
         store: { id: sale.store.id } as any,
@@ -1469,7 +1528,7 @@ export class SalesService {
         updatedById: userId,
       });
 
-      return manager.getRepository(SaleReturn).save(saleReturn);
+      return saleReturnRepo.save(saleReturn);
     });
   }
 
@@ -1494,19 +1553,347 @@ export class SalesService {
    */
   private async getAlreadyReturnedQuantities(
     saleId: string,
-    manager: EntityManager,
+    manager?: EntityManager,
   ): Promise<Map<string, number>> {
-    const rows = await manager
-      .getRepository(SaleReturnLine)
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const rows = await this.getSaleReturnLineRepo(manager)
       .createQueryBuilder('rl')
       .select('rl.saleLineId', 'saleLineId')
       .addSelect('SUM(rl.quantity)', 'total')
       .innerJoin('rl.saleReturn', 'sr')
       .where('sr.saleId = :saleId', { saleId })
+      .andWhere('sr.tenantId = :tenantId', { tenantId })
       .groupBy('rl.saleLineId')
       .getRawMany<{ saleLineId: string; total: string }>();
 
     return new Map(rows.map((r) => [r.saleLineId, Number(r.total)]));
+  }
+
+  // ---- Satır düzenleme (cerrahi) ----
+
+  /**
+   * Mevcut bir satış satırını günceller.
+   * - quantity değişirse stok farkı (IN veya OUT) hareketi oluşturulur.
+   * - productVariantId / productPackageId değiştirilemez.
+   * - İade kaydı olan satırda quantity yalnızca "iade edilmemiş" miktara kadar azaltılabilir;
+   *   finansal alanlar her durumda güncellenebilir.
+   */
+  async updateSaleLine(
+    saleId: string,
+    lineId: string,
+    dto: import('./dto/patch-sale-line.dto').PatchSaleLineDto,
+  ): Promise<SaleLine> {
+    return this.dataSource.transaction(async (manager) => {
+      const tenantId = this.appContext.getTenantIdOrThrow();
+      const userId = this.appContext.getUserIdOrThrow();
+
+      const saleRepo = manager.getRepository(Sale);
+      const saleLineRepo = manager.getRepository(SaleLine);
+
+      const sale = await saleRepo.findOne({
+        where: { id: saleId, tenant: { id: tenantId } },
+        relations: ['store'],
+      });
+      if (!sale) throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+      if (sale.status === SaleStatus.CANCELLED) {
+        throw new BadRequestException(SalesErrors.SALE_ALREADY_CANCELLED);
+      }
+
+      const line = await saleLineRepo.findOne({
+        where: { id: lineId, sale: { id: saleId } },
+        relations: [
+          'productVariant',
+          'productVariant.product',
+          'productPackage',
+          'productPackage.items',
+          'productPackage.items.productVariant',
+        ],
+      });
+      if (!line) throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+
+      // --- Miktar değişimi: stok farkını ayarla ---
+      if (dto.quantity !== undefined && dto.quantity !== Number(line.quantity)) {
+        const oldQty = Number(line.quantity);
+        const newQty = dto.quantity;
+
+        // İade kaydı varsa minimum miktarı kısıtla
+        const returnedQty = await manager
+          .getRepository(SaleReturnLine)
+          .createQueryBuilder('rl')
+          .select('COALESCE(SUM(rl.quantity), 0)', 'total')
+          .where('rl.saleLineId = :lineId', { lineId: line.id })
+          .getRawOne()
+          .then((r) => Number(r?.total ?? 0));
+
+        if (newQty < returnedQty) {
+          throw new BadRequestException(
+            `Bu satırdan ${returnedQty} adet iade alındığı için miktar ${returnedQty}'den az yapılamaz`,
+          );
+        }
+
+        const qtyDiff = newQty - oldQty; // pozitif → daha fazla satış, negatif → stok iade
+
+        if (line.productVariant) {
+          if (qtyDiff > 0) {
+            // Ek stok çekimi
+            await this.inventoryService.sellFromStore(
+              {
+                storeId: sale.store.id,
+                productVariantId: line.productVariant.id,
+                quantity: qtyDiff,
+                reference: sale.receiptNo ?? `SALE-${sale.id}`,
+                meta: { saleId: sale.id, saleLineId: line.id, reason: 'line-qty-increase' },
+                saleId: sale.id,
+                saleLineId: line.id,
+              },
+              manager,
+            );
+          } else {
+            // Stok iadesi
+            await this.inventoryService.createReturnMovementForSaleLine(
+              {
+                saleId: sale.id,
+                saleLineId: line.id,
+                storeId: sale.store.id,
+                productVariantId: line.productVariant.id,
+                quantity: Math.abs(qtyDiff),
+                currency: line.currency,
+                unitPrice: line.unitPrice,
+              },
+              manager,
+            );
+          }
+        } else if (line.productPackage) {
+          // Paket satırı: her item için oran kadar stok ayarla
+          for (const item of line.productPackage.items ?? []) {
+            const itemDiff = qtyDiff * Number(item.quantity);
+            if (itemDiff > 0) {
+              await this.inventoryService.sellFromStore(
+                {
+                  storeId: sale.store.id,
+                  productVariantId: item.productVariant.id,
+                  quantity: itemDiff,
+                  reference: sale.receiptNo ?? `SALE-${sale.id}`,
+                  meta: { saleId: sale.id, saleLineId: line.id, reason: 'line-qty-increase' },
+                  saleId: sale.id,
+                  saleLineId: line.id,
+                },
+                manager,
+              );
+            } else {
+              await this.inventoryService.createReturnMovementForSaleLine(
+                {
+                  saleId: sale.id,
+                  saleLineId: line.id,
+                  storeId: sale.store.id,
+                  productVariantId: item.productVariant.id,
+                  quantity: Math.abs(itemDiff),
+                  currency: line.currency,
+                },
+                manager,
+              );
+            }
+          }
+        }
+
+        line.quantity = newQty;
+      }
+
+      // --- Finansal alanları güncelle ---
+      const { quantity: _q, ...financialFields } = dto;
+      Object.assign(line, financialFields);
+
+      // lineTotal'ı yeniden hesapla (dto'da verilmediyse)
+      if (dto.lineTotal === undefined) {
+        const recalc = calculateLineAmounts({
+          quantity: Number(line.quantity),
+          unitPrice: Number(line.unitPrice ?? 0),
+          discountPercent: line.discountPercent != null ? Number(line.discountPercent) : null,
+          discountAmount: line.discountAmount != null ? Number(line.discountAmount) : null,
+          taxPercent: line.taxPercent != null ? Number(line.taxPercent) : null,
+          taxAmount: line.taxAmount != null ? Number(line.taxAmount) : null,
+        });
+        line.lineTotal = recalc.lineTotal;
+      }
+      line.updatedById = userId;
+      const updatedLine = await saleLineRepo.save(line);
+
+      // --- Satış toplamlarını güncelle ---
+      const allLines = await saleLineRepo.find({ where: { sale: { id: saleId } } });
+      const totals = this.recomputeSaleTotalsFromLines(allLines);
+      const paidAmount = await this.recalcPaidAmount(saleId);
+      sale.unitPrice = totals.unitPrice;
+      sale.lineTotal = totals.lineTotal;
+      sale.paidAmount = paidAmount;
+      sale.paymentStatus = this.computePaymentStatus(paidAmount, totals.lineTotal);
+      sale.updatedById = userId;
+      await saleRepo.save(sale);
+
+      return updatedLine;
+    });
+  }
+
+  /**
+   * Mevcut bir satış fişine yeni satır ekler.
+   * İptal edilmiş satışa satır eklenemez.
+   */
+  async addSaleLine(
+    saleId: string,
+    dto: import('./dto/create-sale-line.dto').CreateSaleLineDto,
+  ): Promise<SaleLine> {
+    return this.dataSource.transaction(async (manager) => {
+      const tenantId = this.appContext.getTenantIdOrThrow();
+      const userId = this.appContext.getUserIdOrThrow();
+
+      const saleRepo = manager.getRepository(Sale);
+      const saleLineRepo = manager.getRepository(SaleLine);
+
+      const sale = await saleRepo.findOne({
+        where: { id: saleId, tenant: { id: tenantId } },
+        relations: ['store'],
+      });
+      if (!sale) throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+      if (sale.status === SaleStatus.CANCELLED) {
+        throw new BadRequestException(SalesErrors.SALE_ALREADY_CANCELLED);
+      }
+
+      if (!dto.productVariantId && !dto.productPackageId) {
+        throw new BadRequestException('productVariantId veya productPackageId gönderilmelidir');
+      }
+      if (dto.productVariantId && dto.productPackageId) {
+        throw new BadRequestException('Bir satırda hem productVariantId hem productPackageId olamaz');
+      }
+
+      let savedLine: SaleLine;
+
+      if (dto.productPackageId) {
+        await this.createPackageLineAndDeductStock(
+          dto as any,
+          sale,
+          sale.store,
+          tenantId,
+          userId,
+          manager,
+        );
+      } else {
+        const variantId = dto.productVariantId!;
+        const variant = await this.getTenantVariantOrThrow(variantId, manager);
+        const effectivePrices = await this.priceService.getEffectiveSaleParamsForStoreBulk(
+          sale.store.id,
+          [variantId],
+          manager,
+        );
+        await this.processVariantLine(
+          { ...dto, productVariantId: variantId },
+          effectivePrices.get(variantId),
+          variant,
+          sale.id,
+          sale.receiptNo,
+          sale.store.id,
+          userId,
+          false,
+          manager,
+        );
+      }
+
+      // Her iki dalda da createPackageLineAndDeductStock / processVariantLine satırı
+      // DB'ye kaydeder — son eklenen satırı al
+      const lines = await saleLineRepo.find({
+        where: { sale: { id: saleId } },
+        order: { createdAt: 'DESC' },
+        take: 1,
+      });
+      savedLine = lines[0];
+
+      // Satış toplamlarını güncelle
+      const allLines = await saleLineRepo.find({ where: { sale: { id: saleId } } });
+      const totals = this.recomputeSaleTotalsFromLines(allLines);
+      const paidAmount = await this.recalcPaidAmount(saleId);
+
+      // currency: tek para birimiyse o, karışıksa null
+      const currencies = new Set(allLines.map((l) => l.currency).filter(Boolean));
+      sale.unitPrice = totals.unitPrice;
+      sale.lineTotal = totals.lineTotal;
+      sale.currency = currencies.size === 1 ? Array.from(currencies)[0]! : null;
+      sale.paidAmount = paidAmount;
+      sale.paymentStatus = this.computePaymentStatus(paidAmount, totals.lineTotal);
+      sale.updatedById = userId;
+      await saleRepo.save(sale);
+
+      return savedLine!;
+    });
+  }
+
+  /**
+   * Bir satış satırını siler ve stoğu iade eder.
+   * - Son satır silinemez (satış en az 1 satır içermelidir).
+   * - İade kaydı olan satır silinemez.
+   * - İptal edilmiş satışta satır silinemez.
+   */
+  async removeSaleLine(saleId: string, lineId: string): Promise<void> {
+    return this.dataSource.transaction(async (manager) => {
+      const tenantId = this.appContext.getTenantIdOrThrow();
+      const userId = this.appContext.getUserIdOrThrow();
+
+      const saleRepo = manager.getRepository(Sale);
+      const saleLineRepo = manager.getRepository(SaleLine);
+
+      const sale = await saleRepo.findOne({
+        where: { id: saleId, tenant: { id: tenantId } },
+        relations: ['store'],
+      });
+      if (!sale) throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+      if (sale.status === SaleStatus.CANCELLED) {
+        throw new BadRequestException(SalesErrors.SALE_ALREADY_CANCELLED);
+      }
+
+      const line = await saleLineRepo.findOne({
+        where: { id: lineId, sale: { id: saleId } },
+        relations: [
+          'productVariant',
+          'productPackage',
+          'productPackage.items',
+          'productPackage.items.productVariant',
+        ],
+      });
+      if (!line) throw new NotFoundException(SalesErrors.SALE_NOT_FOUND);
+
+      // Son satır kontrolü
+      const lineCount = await saleLineRepo.count({ where: { sale: { id: saleId } } });
+      if (lineCount <= 1) {
+        throw new BadRequestException(SalesErrors.SALE_MUST_HAVE_LINES);
+      }
+
+      // İade kaydı kontrolü
+      const returnCount = await manager
+        .getRepository(SaleReturnLine)
+        .count({ where: { saleLine: { id: lineId } } });
+      if (returnCount > 0) {
+        throw new BadRequestException(
+          'Bu satır için iade kaydı bulunduğundan silinemez. İadeli satırları kaldırmak için önce iadeyi iptal edin.',
+        );
+      }
+
+      // Stok iadesi
+      await this.returnLineStock(line, sale.id, sale.store.id, manager);
+
+      // Satırı sil
+      await saleLineRepo.delete({ id: lineId });
+
+      // Satış toplamlarını güncelle
+      const remainingLines = await saleLineRepo.find({ where: { sale: { id: saleId } } });
+      const totals = this.recomputeSaleTotalsFromLines(remainingLines);
+      const paidAmount = await this.recalcPaidAmount(saleId);
+
+      const currencies = new Set(remainingLines.map((l) => l.currency).filter(Boolean));
+      sale.unitPrice = totals.unitPrice;
+      sale.lineTotal = totals.lineTotal;
+      sale.currency = currencies.size === 1 ? Array.from(currencies)[0]! : null;
+      sale.paidAmount = paidAmount;
+      sale.paymentStatus = this.computePaymentStatus(paidAmount, totals.lineTotal);
+      sale.updatedById = userId;
+      await saleRepo.save(sale);
+    });
   }
 
   // ---- PDF Fiş ----

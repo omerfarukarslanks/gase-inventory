@@ -1,15 +1,17 @@
 import { ApiPropertyOptional } from '@nestjs/swagger/dist/decorators/api-property.decorator';
-import { Type } from 'class-transformer';
 import {
-  ArrayMinSize,
-  IsArray,
   IsObject,
   IsOptional,
   IsUUID,
-  ValidateNested,
 } from 'class-validator';
-import { UpdateSaleLineDto } from './update-sale-line.dto';
 
+/**
+ * Fiş üstü bilgileri günceller.
+ * Satır değişiklikleri için /sales/:id/lines alt kaynağını kullanın:
+ *   POST   /sales/:id/lines           — yeni satır ekle
+ *   PATCH  /sales/:id/lines/:lineId   — satırı güncelle
+ *   DELETE /sales/:id/lines/:lineId   — satırı sil
+ */
 export class UpdateSaleDto {
   @ApiPropertyOptional({
     description: 'Musteri ID (null gonderilirse iliski kaldirilir)',
@@ -27,16 +29,4 @@ export class UpdateSaleDto {
   @IsOptional()
   @IsObject({ message: 'meta object olmalidir' })
   meta?: Record<string, any>;
-
-  @ApiPropertyOptional({
-    type: [UpdateSaleLineDto],
-    description:
-      'Satis satirlari (gonderilirse mevcut satirlar tamamen bu liste ile degistirilir)',
-  })
-  @IsOptional()
-  @IsArray({ message: 'lines dizi olmalidir' })
-  @ArrayMinSize(1, { message: 'lines en az bir satir icermelidir' })
-  @ValidateNested({ each: true })
-  @Type(() => UpdateSaleLineDto)
-  lines?: UpdateSaleLineDto[];
 }
