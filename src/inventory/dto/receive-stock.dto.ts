@@ -64,11 +64,6 @@ export class ReceiveStockDto {
   @IsNumber()
   taxAmount?: number;
 
-  @ApiPropertyOptional({ example: 1200, description: 'Satır toplamı (indirim & vergi sonrası)' })
-  @IsOptional()
-  @IsNumber()
-  lineTotal?: number;
-
   @ApiPropertyOptional({ example: 'CAMP-NEWYEAR' })
   @IsOptional()
   @IsString({ message: 'campaignCode metni olmalıdır' })

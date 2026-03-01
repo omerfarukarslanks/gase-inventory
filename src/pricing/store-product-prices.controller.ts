@@ -86,7 +86,6 @@ export class StoreProductPricesController {
         discountAmount: dto.discountAmount,
         taxPercent: dto.taxPercent,
         taxAmount: dto.taxAmount,
-        lineTotal: dto.lineTotal,
         campaignCode: dto.campaignCode,
       });
     }
@@ -108,7 +107,6 @@ export class StoreProductPricesController {
       discountAmount: dto.discountAmount,
       taxPercent: dto.taxPercent,
       taxAmount: dto.taxAmount,
-      lineTotal: dto.lineTotal,
       campaignCode: dto.campaignCode,
     });
 
@@ -135,7 +133,6 @@ export class StoreProductPricesController {
       discountAmount: dto.discountAmount,
       taxPercent: dto.taxPercent,
       taxAmount: dto.taxAmount,
-      lineTotal: dto.lineTotal,
       campaignCode: dto.campaignCode,
     });
   }

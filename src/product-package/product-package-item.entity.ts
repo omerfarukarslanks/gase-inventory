@@ -31,4 +31,12 @@ export class ProductPackageItem extends AuditableEntity {
    */
   @Column({ type: 'integer' })
   quantity: number;
+
+  /**
+   * Bu variantin paket içindeki birim fiyat katkısı.
+   * Kısmi iade senaryosunda otomatik refundAmount hesabı için kullanılır.
+   * Örnek: S beden kazak = 100 TL → 1 adet S iadesi = 100 TL refund
+   */
+  @Column('numeric', { precision: 12, scale: 2, nullable: true })
+  unitPrice?: number | null;
 }

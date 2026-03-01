@@ -37,7 +37,8 @@ import { ProductPackageService } from 'src/product-package/product-package.servi
 import { ProductPackage } from 'src/product-package/product-package.entity';
 import { SaleReturn } from './sale-return.entity';
 import { SaleReturnLine } from './sale-return-line.entity';
-import { CreateSaleReturnDto } from './dto/create-sale-return.dto';
+import { CreateSaleReturnDto, PackageVariantReturnItemDto } from './dto/create-sale-return.dto';
+import { PackageVariantReturnRecord } from './sale-return-line.entity';
 import { SaleReceiptService, ReceiptData } from './sale-receipt.service';
 
 @Injectable()
@@ -196,15 +197,21 @@ export class SalesService {
   ): Promise<void> {
     if (line.productPackage) {
       const pkg = line.productPackage as ProductPackage;
+      // Mod B ile daha önce iade edilmiş varyant miktarlarını çek;
+      // iptal sırasında bu miktarlar tekrar iade edilmemeli.
+      const alreadyReturnedMap = await this.getAlreadyReturnedPackageVariantQty(line.id, manager);
       for (const item of pkg.items ?? []) {
         const totalQty = Number(line.quantity) * Number(item.quantity);
+        const alreadyReturned = alreadyReturnedMap.get(item.productVariant.id) ?? 0;
+        const netReturnQty = totalQty - alreadyReturned;
+        if (netReturnQty <= 0) continue;
         await this.inventoryService.createReturnMovementForSaleLine(
           {
             saleId,
             saleLineId: line.id,
             storeId,
             productVariantId: item.productVariant.id,
-            quantity: totalQty,
+            quantity: netReturnQty,
             currency: line.currency,
             unitPrice: undefined,
             lineTotal: undefined,
@@ -320,7 +327,6 @@ export class SalesService {
         discountAmount: persistedDiscountAmount ?? undefined,
         taxPercent: persistedTaxPercent ?? undefined,
         taxAmount: persistedTaxAmount ?? undefined,
-        lineTotal,
         campaignCode: w.campaignCode ?? undefined,
         saleId,
         saleLineId: savedLine.id,
@@ -769,6 +775,9 @@ export class SalesService {
     }
 
     sale.status = SaleStatus.CANCELLED;
+    sale.paymentStatus = PaymentStatus.CANCELLED;
+    // İptal sonrası kalan bakiye 0 olsun; lineTotal (ürün toplamı) korunur.
+    sale.paidAmount = Number(sale.lineTotal ?? 0);
     sale.updatedById = userId;
     sale.cancelledById = userId;
     sale.cancelledAt = new Date();
@@ -814,6 +823,15 @@ export class SalesService {
     );
     const returnedByLineId = await this.getAlreadyReturnedQuantities(
       sale.id,
+      manager,
+    );
+
+    const packageSaleLineIds = (sale.lines ?? [])
+      .filter((l) => l.productPackage)
+      .map((l) => l.id);
+
+    const modBReturnsMap = await this.getModBReturnsBySaleLineIds(
+      packageSaleLineIds,
       manager,
     );
 
@@ -864,16 +882,25 @@ export class SalesService {
           : null,
         // Paket satırı
         productPackage: line.productPackage
-          ? {
-              id: line.productPackage.id,
-              name: line.productPackage.name,
-              code: line.productPackage.code ?? null,
-              items: (line.productPackage.items ?? []).map((item) => ({
-                variantId: item.productVariant.id,
-                variantName: item.productVariant.name,
-                qtyPerPackage: String(item.quantity),
-              })),
-            }
+          ? (() => {
+              const pool = this.buildPackageVariantPool(
+                line,
+                modBReturnsMap.get(line.id) ?? new Map(),
+              );
+              return {
+                id: line.productPackage.id,
+                name: line.productPackage.name,
+                code: line.productPackage.code ?? null,
+                items: (line.productPackage.items ?? []).map((item) => ({
+                  variantId: item.productVariant.id,
+                  variantName: item.productVariant.name,
+                  variantCode: item.productVariant.code,
+                  qtyPerPackage: String(item.quantity),
+                  unitPrice: item.unitPrice != null ? String(item.unitPrice) : null,
+                })),
+                ...pool,
+              };
+            })()
           : null,
         quantity: String(line.quantity ?? 0),
         originalQuantity: String(
@@ -1342,8 +1369,150 @@ export class SalesService {
   // ---- Kısmi İade ----
 
   /**
+   * Bir satış satırına ait mevcut paket varyant iade miktarlarını döner.
+   * packageVariantReturns JSONB kolonunu sorgular ve per-variant toplamı hesaplar.
+   */
+  private async getAlreadyReturnedPackageVariantQty(
+    saleLineId: string,
+    manager: EntityManager,
+  ): Promise<Map<string, number>> {
+    const existingReturnLines = await manager
+      .getRepository(SaleReturnLine)
+      .find({
+        where: { saleLine: { id: saleLineId } },
+        select: { id: true, packageVariantReturns: true },
+      });
+
+    const map = new Map<string, number>();
+    for (const rl of existingReturnLines) {
+      for (const record of rl.packageVariantReturns ?? []) {
+        map.set(record.productVariantId, (map.get(record.productVariantId) ?? 0) + record.quantity);
+      }
+    }
+    return map;
+  }
+
+  /**
+   * Birden fazla paket satır için Mod B iadelerini toplu çeker.
+   * Map<saleLineId, Map<variantId, returnedQty>> döner.
+   */
+  private async getModBReturnsBySaleLineIds(
+    saleLineIds: string[],
+    manager?: EntityManager,
+  ): Promise<Map<string, Map<string, number>>> {
+    const result = new Map<string, Map<string, number>>();
+    if (saleLineIds.length === 0) return result;
+
+    const returnLines = await this.getSaleReturnLineRepo(manager).find({
+      where: { saleLine: { id: In(saleLineIds) } },
+      select: { id: true, packageVariantReturns: true, saleLine: { id: true } },
+      relations: ['saleLine'],
+    });
+
+    for (const rl of returnLines) {
+      if (!rl.packageVariantReturns?.length) continue;
+      const lineId = rl.saleLine.id;
+      if (!result.has(lineId)) result.set(lineId, new Map());
+      const variantMap = result.get(lineId)!;
+      for (const rec of rl.packageVariantReturns) {
+        variantMap.set(rec.productVariantId, (variantMap.get(rec.productVariantId) ?? 0) + rec.quantity);
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Bir paket satırı için varyant havuzunu hesaplar.
+   * Her varyant için satılan, iade edilen, kalan miktarlar ile
+   * tam paket sayısı ve eksik varyantlar döner.
+   */
+  private buildPackageVariantPool(
+    saleLine: SaleLine,
+    modBReturnedMap: Map<string, number>,
+  ): {
+    variantPool: {
+      variantId: string;
+      variantName: string;
+      variantCode: string;
+      qtyPerPackage: number;
+      unitPrice: string | null;
+      sold: number;
+      returned: number;
+      remaining: number;
+    }[];
+    completePackagesRemaining: number;
+    partialPackage: {
+      exists: boolean;
+      incompletePackageCount: number;
+      missingVariants: string[];
+      presentVariants: string[];
+    };
+  } {
+    const pkg = saleLine.productPackage as ProductPackage;
+    const baseQty = this.toSafeNumber(saleLine.quantity);
+
+    const variantPool = (pkg.items ?? []).map((pkgItem) => {
+      const qtyPerPackage = Number(pkgItem.quantity);
+      const sold = baseQty * qtyPerPackage;
+      const returned = modBReturnedMap.get(pkgItem.productVariant.id) ?? 0;
+      return {
+        variantId: pkgItem.productVariant.id,
+        variantName: pkgItem.productVariant.name,
+        variantCode: pkgItem.productVariant.code,
+        qtyPerPackage,
+        unitPrice: pkgItem.unitPrice != null ? String(pkgItem.unitPrice) : null,
+        sold,
+        returned,
+        remaining: sold - returned,
+      };
+    });
+
+    const completePackagesRemaining =
+      variantPool.length > 0
+        ? Math.floor(Math.min(...variantPool.map((v) => v.remaining / v.qtyPerPackage)))
+        : 0;
+
+    // Her varyant için tam paket dışında kalan fazla birim sayısını hesapla.
+    // Bu fazla birimlerden kaç kısmi paket slotu oluşturulabildiğini bul.
+    // En yüksek slot sayısı = toplam eksik (kısmi) paket adedi.
+    const additionalSlotsPerVariant = variantPool.map((v) =>
+      Math.floor((v.remaining - completePackagesRemaining * v.qtyPerPackage) / v.qtyPerPackage),
+    );
+    const incompletePackageCount =
+      additionalSlotsPerVariant.length > 0 ? Math.max(...additionalSlotsPerVariant) : 0;
+
+    const partialExists = incompletePackageCount > 0;
+
+    // Eksik varyant: tüm kısmi paket slotlarını karşılayamayan varyantlar
+    // Tam varyant: tüm slotları karşılayabilen varyantlar
+    const missingVariants = partialExists
+      ? variantPool
+          .filter((_, i) => additionalSlotsPerVariant[i] < incompletePackageCount)
+          .map((v) => v.variantName)
+      : [];
+    const presentVariants = partialExists
+      ? variantPool
+          .filter((_, i) => additionalSlotsPerVariant[i] >= incompletePackageCount)
+          .map((v) => v.variantName)
+      : [];
+
+    return {
+      variantPool,
+      completePackagesRemaining,
+      partialPackage: { exists: partialExists, incompletePackageCount, missingVariants, presentVariants },
+    };
+  }
+
+  /**
    * Bir satıştan seçili satırları kısmen iade eder.
    * Orijinal satış CONFIRMED kalır, stoklar geri yüklenir.
+   *
+   * İki senaryo desteklenir:
+   *  - Perakende (variant satır): quantity ile iade miktarı belirtilir.
+   *  - Toptan/Paket satır, tam paket birimi: quantity ile kaç paket iade edileceği belirtilir.
+   *  - Toptan/Paket satır, varyant bazlı: packageVariantReturns ile paketteki hangi
+   *    varianttan kaç adet iade edileceği belirtilir; saleLine.quantity güncellenmez,
+   *    yalnızca stok hareketi oluşturulur.
    */
   async createSaleReturn(saleId: string, dto: CreateSaleReturnDto): Promise<SaleReturn> {
     const tenantId = this.appContext.getTenantIdOrThrow();
@@ -1421,43 +1590,30 @@ export class SalesService {
           throw new BadRequestException(`Satır ${item.saleLineId} bu satışa ait değil.`);
         }
 
-        const returnQuantity = this.toSafeNumber(item.quantity);
-        if (returnQuantity <= 0) {
-          throw new BadRequestException(`Satır ${item.saleLineId}: iade miktarı 0'dan büyük olmalıdır.`);
-        }
-
-        const currentQuantity = this.toSafeNumber(saleLine.quantity);
-        if (returnQuantity > currentQuantity) {
-          throw new BadRequestException(
-            `Satır ${item.saleLineId}: iade miktarı (${returnQuantity}) izin verilenin üzerinde (${currentQuantity}).`,
-          );
-        }
-
-        const returnAmounts = this.computeSaleLineAmountsForQuantity(
-          saleLine,
-          returnQuantity,
-        );
-
-        // Stok iadesi
-        if (saleLine.productPackage) {
-          const pkg = saleLine.productPackage as ProductPackage;
-          for (const pkgItem of pkg.items ?? []) {
-            const returnQty = returnQuantity * Number(pkgItem.quantity);
-            await this.inventoryService.createReturnMovementForSaleLine(
-              {
-                saleId,
-                saleLineId: saleLine.id,
-                storeId: sale.store.id,
-                productVariantId: pkgItem.productVariant.id,
-                quantity: returnQty,
-                currency: saleLine.currency,
-                unitPrice: undefined,
-                lineTotal: undefined,
-              },
-              manager,
+        // ── Perakende satır (variant) ──────────────────────────────────────────────
+        if (saleLine.productVariant) {
+          if (!item.quantity) {
+            throw new BadRequestException(
+              `Satır ${item.saleLineId}: perakende satır iadesi için quantity zorunludur.`,
             );
           }
-        } else if (saleLine.productVariant) {
+          if (item.packageVariantReturns?.length) {
+            throw new BadRequestException(
+              `Satır ${item.saleLineId}: perakende satırlarda packageVariantReturns kullanılamaz.`,
+            );
+          }
+
+          const returnQuantity = this.toSafeNumber(item.quantity);
+          const currentQuantity = this.toSafeNumber(saleLine.quantity);
+
+          if (returnQuantity > currentQuantity) {
+            throw new BadRequestException(
+              `Satır ${item.saleLineId}: iade miktarı (${returnQuantity}) mevcut miktarın (${currentQuantity}) üzerinde.`,
+            );
+          }
+
+          const returnAmounts = this.computeSaleLineAmountsForQuantity(saleLine, returnQuantity);
+
           await this.inventoryService.createReturnMovementForSaleLine(
             {
               saleId,
@@ -1476,34 +1632,193 @@ export class SalesService {
             },
             manager,
           );
+
+          const remainingQuantity = currentQuantity - returnQuantity;
+          const remainingAmounts = this.computeSaleLineAmountsForQuantity(saleLine, remainingQuantity);
+          saleLine.quantity = remainingAmounts.quantity;
+          saleLine.unitPrice = remainingAmounts.unitPrice;
+          saleLine.discountPercent = remainingAmounts.discountPercent ?? undefined;
+          saleLine.discountAmount = remainingAmounts.discountAmount ?? undefined;
+          saleLine.taxPercent = remainingAmounts.taxPercent ?? undefined;
+          saleLine.taxAmount = remainingAmounts.taxAmount ?? undefined;
+          saleLine.lineTotal = remainingAmounts.lineTotal;
+          saleLine.updatedById = userId;
+          await saleLineRepo.save(saleLine);
+
+          totalRefund += this.toSafeNumber(item.refundAmount);
+
+          returnLineEntities.push(
+            returnLineRepo.create({
+              saleLine: { id: saleLine.id } as any,
+              quantity: returnQuantity,
+              packageVariantReturns: null,
+              refundAmount: this.toSafeNumber(item.refundAmount),
+              createdById: userId,
+              updatedById: userId,
+            }),
+          );
+
+        // ── Paket satır ────────────────────────────────────────────────────────────
+        } else if (saleLine.productPackage) {
+          const hasQuantity = item.quantity != null && item.quantity > 0;
+          const hasVariantReturns = (item.packageVariantReturns?.length ?? 0) > 0;
+
+          if (hasQuantity && hasVariantReturns) {
+            throw new BadRequestException(
+              `Satır ${item.saleLineId}: paket iadelerinde quantity ve packageVariantReturns aynı anda kullanılamaz.`,
+            );
+          }
+          if (!hasQuantity && !hasVariantReturns) {
+            throw new BadRequestException(
+              `Satır ${item.saleLineId}: paket satır iadesi için quantity (tam paket birimi) veya packageVariantReturns (varyant bazlı) belirtilmelidir.`,
+            );
+          }
+
+          const pkg = saleLine.productPackage as ProductPackage;
+
+          // ── Mod A: tam paket birimi iade ────────────────────────────────────────
+          if (hasQuantity) {
+            const returnQuantity = this.toSafeNumber(item.quantity);
+            const currentQuantity = this.toSafeNumber(saleLine.quantity);
+
+            if (returnQuantity > currentQuantity) {
+              throw new BadRequestException(
+                `Satır ${item.saleLineId}: iade miktarı (${returnQuantity}) mevcut paket miktarının (${currentQuantity}) üzerinde.`,
+              );
+            }
+
+            for (const pkgItem of pkg.items ?? []) {
+              await this.inventoryService.createReturnMovementForSaleLine(
+                {
+                  saleId,
+                  saleLineId: saleLine.id,
+                  storeId: sale.store.id,
+                  productVariantId: pkgItem.productVariant.id,
+                  quantity: returnQuantity * Number(pkgItem.quantity),
+                  currency: saleLine.currency,
+                  unitPrice: undefined,
+                  lineTotal: undefined,
+                },
+                manager,
+              );
+            }
+
+            const remainingQuantity = currentQuantity - returnQuantity;
+            // Bilinen paket birim fiyatından iade değerini hesapla; mevcut lineTotal'dan çıkar.
+            // Bu sayede önceki Mod B (varyant bazlı) iade düzeltmeleri korunur.
+            const returnedAmounts = this.computeSaleLineAmountsForQuantity(saleLine, returnQuantity);
+            const remainingAmounts = this.computeSaleLineAmountsForQuantity(saleLine, remainingQuantity);
+            saleLine.quantity = remainingAmounts.quantity;
+            saleLine.unitPrice = remainingAmounts.unitPrice;
+            saleLine.discountPercent = remainingAmounts.discountPercent ?? undefined;
+            saleLine.discountAmount = remainingAmounts.discountAmount ?? undefined;
+            saleLine.taxPercent = remainingAmounts.taxPercent ?? undefined;
+            saleLine.taxAmount = remainingAmounts.taxAmount ?? undefined;
+            saleLine.lineTotal = Math.max(0, this.toSafeNumber(saleLine.lineTotal) - returnedAmounts.lineTotal);
+            saleLine.updatedById = userId;
+            await saleLineRepo.save(saleLine);
+
+            totalRefund += this.toSafeNumber(item.refundAmount);
+
+            returnLineEntities.push(
+              returnLineRepo.create({
+                saleLine: { id: saleLine.id } as any,
+                quantity: returnQuantity,
+                packageVariantReturns: null,
+                refundAmount: this.toSafeNumber(item.refundAmount),
+                createdById: userId,
+                updatedById: userId,
+              }),
+            );
+
+          // ── Mod B: varyant bazlı iade ────────────────────────────────────────────
+          } else {
+            const pkgItemMap = new Map(
+              (pkg.items ?? []).map((pi) => [pi.productVariant.id, pi]),
+            );
+
+            // Daha önce bu satır için yapılmış varyant iadelerini çek
+            const alreadyReturnedMap = await this.getAlreadyReturnedPackageVariantQty(
+              saleLine.id,
+              manager,
+            );
+
+            const packageVariantRecords: PackageVariantReturnRecord[] = [];
+            let autoRefundAmount = 0;
+
+            for (const variantReturn of item.packageVariantReturns as PackageVariantReturnItemDto[]) {
+              const pkgItem = pkgItemMap.get(variantReturn.productVariantId);
+              if (!pkgItem) {
+                throw new BadRequestException(
+                  `Satır ${item.saleLineId}: ${variantReturn.productVariantId} bu paketin içinde yer almıyor.`,
+                );
+              }
+
+              // Orijinal satıştaki maksimum varyant miktarı
+              const originalVariantQty = this.toSafeNumber(saleLine.quantity) * Number(pkgItem.quantity);
+              const alreadyReturned = alreadyReturnedMap.get(variantReturn.productVariantId) ?? 0;
+              const maxReturnable = originalVariantQty - alreadyReturned;
+
+              if (variantReturn.quantity > maxReturnable) {
+                throw new BadRequestException(
+                  `Satır ${item.saleLineId} / Variant ${variantReturn.productVariantId}: iade miktarı (${variantReturn.quantity}) izin verilenin üzerinde (kalan: ${maxReturnable}).`,
+                );
+              }
+
+              await this.inventoryService.createReturnMovementForSaleLine(
+                {
+                  saleId,
+                  saleLineId: saleLine.id,
+                  storeId: sale.store.id,
+                  productVariantId: variantReturn.productVariantId,
+                  quantity: variantReturn.quantity,
+                  currency: saleLine.currency,
+                  unitPrice: pkgItem.unitPrice ?? undefined,
+                  lineTotal: undefined,
+                },
+                manager,
+              );
+
+              // unitPrice tanımlıysa iade tutarını otomatik hesapla
+              if (pkgItem.unitPrice != null) {
+                autoRefundAmount += variantReturn.quantity * Number(pkgItem.unitPrice);
+              }
+
+              packageVariantRecords.push({
+                productVariantId: variantReturn.productVariantId,
+                quantity: variantReturn.quantity,
+              });
+            }
+
+            // Açıkça belirtilmişse onu kullan, yoksa unitPrice'dan hesaplananı al
+            const refundAmount = item.refundAmount != null
+              ? this.toSafeNumber(item.refundAmount)
+              : autoRefundAmount;
+
+            // saleLine.lineTotal'ı iade tutarı kadar düşür
+            if (refundAmount > 0) {
+              saleLine.lineTotal = Math.max(
+                0,
+                this.toSafeNumber(saleLine.lineTotal) - refundAmount,
+              );
+              saleLine.updatedById = userId;
+              await saleLineRepo.save(saleLine);
+            }
+
+            totalRefund += refundAmount;
+
+            returnLineEntities.push(
+              returnLineRepo.create({
+                saleLine: { id: saleLine.id } as any,
+                quantity: 0,
+                packageVariantReturns: packageVariantRecords,
+                refundAmount,
+                createdById: userId,
+                updatedById: userId,
+              }),
+            );
+          }
         }
-
-        const remainingQuantity = currentQuantity - returnQuantity;
-        const remainingAmounts = this.computeSaleLineAmountsForQuantity(
-          saleLine,
-          remainingQuantity,
-        );
-
-        saleLine.quantity = remainingAmounts.quantity;
-        saleLine.unitPrice = remainingAmounts.unitPrice;
-        saleLine.discountPercent = remainingAmounts.discountPercent ?? undefined;
-        saleLine.discountAmount = remainingAmounts.discountAmount ?? undefined;
-        saleLine.taxPercent = remainingAmounts.taxPercent ?? undefined;
-        saleLine.taxAmount = remainingAmounts.taxAmount ?? undefined;
-        saleLine.lineTotal = remainingAmounts.lineTotal;
-        saleLine.updatedById = userId;
-        await saleLineRepo.save(saleLine);
-
-        totalRefund += this.toSafeNumber(item.refundAmount);
-
-        const returnLine = returnLineRepo.create({
-          saleLine: { id: saleLine.id } as any,
-          quantity: returnQuantity,
-          refundAmount: this.toSafeNumber(item.refundAmount),
-          createdById: userId,
-          updatedById: userId,
-        });
-        returnLineEntities.push(returnLine);
       }
 
       const totals = this.recomputeSaleTotalsFromLines(saleLines);
@@ -1543,7 +1858,14 @@ export class SalesService {
 
     return this.saleReturnRepo.find({
       where: { sale: { id: saleId }, tenant: { id: tenantId } },
-      relations: ['lines', 'lines.saleLine', 'lines.saleLine.productVariant'],
+      relations: [
+        'lines',
+        'lines.saleLine',
+        'lines.saleLine.productVariant',
+        'lines.saleLine.productPackage',
+        'lines.saleLine.productPackage.items',
+        'lines.saleLine.productPackage.items.productVariant',
+      ],
       order: { createdAt: 'DESC' },
     });
   }
@@ -1616,19 +1938,18 @@ export class SalesService {
         const oldQty = Number(line.quantity);
         const newQty = dto.quantity;
 
-        // İade kaydı varsa minimum miktarı kısıtla
-        const returnedQty = await manager
-          .getRepository(SaleReturnLine)
-          .createQueryBuilder('rl')
-          .select('COALESCE(SUM(rl.quantity), 0)', 'total')
-          .where('rl.saleLineId = :lineId', { lineId: line.id })
-          .getRawOne()
-          .then((r) => Number(r?.total ?? 0));
+        // Azaltma: herhangi bir iade kaydı (Mod A veya Mod B) varsa PATCH ile miktar düşürülemez.
+        // Resmi iade için createSaleReturn kullanılmalıdır.
+        if (newQty < oldQty) {
+          const returnLineCount = await manager
+            .getRepository(SaleReturnLine)
+            .count({ where: { saleLine: { id: line.id } } });
 
-        if (newQty < returnedQty) {
-          throw new BadRequestException(
-            `Bu satırdan ${returnedQty} adet iade alındığı için miktar ${returnedQty}'den az yapılamaz`,
-          );
+          if (returnLineCount > 0) {
+            throw new BadRequestException(
+              'Bu satır için iade kaydı mevcut. Miktar azaltmak için iade işlemi (createSaleReturn) kullanınız.',
+            );
+          }
         }
 
         const qtyDiff = newQty - oldQty; // pozitif → daha fazla satış, negatif → stok iade
@@ -1703,18 +2024,16 @@ export class SalesService {
       const { quantity: _q, ...financialFields } = dto;
       Object.assign(line, financialFields);
 
-      // lineTotal'ı yeniden hesapla (dto'da verilmediyse)
-      if (dto.lineTotal === undefined) {
-        const recalc = calculateLineAmounts({
-          quantity: Number(line.quantity),
-          unitPrice: Number(line.unitPrice ?? 0),
-          discountPercent: line.discountPercent != null ? Number(line.discountPercent) : null,
-          discountAmount: line.discountAmount != null ? Number(line.discountAmount) : null,
-          taxPercent: line.taxPercent != null ? Number(line.taxPercent) : null,
-          taxAmount: line.taxAmount != null ? Number(line.taxAmount) : null,
-        });
-        line.lineTotal = recalc.lineTotal;
-      }
+      // lineTotal her zaman yeniden hesaplanır; UI'dan alınmaz
+      const recalc = calculateLineAmounts({
+        quantity: Number(line.quantity),
+        unitPrice: Number(line.unitPrice ?? 0),
+        discountPercent: line.discountPercent != null ? Number(line.discountPercent) : null,
+        discountAmount: line.discountAmount != null ? Number(line.discountAmount) : null,
+        taxPercent: line.taxPercent != null ? Number(line.taxPercent) : null,
+        taxAmount: line.taxAmount != null ? Number(line.taxAmount) : null,
+      });
+      line.lineTotal = recalc.lineTotal;
       line.updatedById = userId;
       const updatedLine = await saleLineRepo.save(line);
 

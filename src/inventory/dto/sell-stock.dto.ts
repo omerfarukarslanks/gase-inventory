@@ -33,8 +33,6 @@ export class SellStockDto {
   taxPercent?: number;
   @ApiPropertyOptional({ example: 54 })
   taxAmount?: number;
-  @ApiPropertyOptional({ example: 1200 })
-  lineTotal?: number;
   @ApiPropertyOptional({ example: 'CAMP-SUMMER2025' })
   campaignCode?: string;
 

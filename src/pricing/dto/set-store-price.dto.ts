@@ -74,14 +74,6 @@ export class SetStorePriceDto {
   taxAmount?: number | null;
 
   @ApiPropertyOptional({
-    description: 'Satır toplam tutarı',
-    example: 1200,
-  })
-  @IsOptional()
-  @IsNumber()
-  lineTotal?: number | null;
-
-  @ApiPropertyOptional({
     description: 'Kampanya kodu',
     example: 'CAMP-NEWYEAR',
   })

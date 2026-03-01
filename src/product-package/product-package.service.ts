@@ -49,6 +49,7 @@ export class ProductPackageService {
     const itemsWithVariants = dto.items.map((i) => ({
       productVariant: variants.find((v) => v.id === i.productVariantId)!,
       quantity: i.quantity,
+      unitPrice: i.unitPrice ?? null,
     }));
 
     const pricing = this.computePackagePricing(itemsWithVariants);
@@ -64,11 +65,12 @@ export class ProductPackageService {
       isActive: dto.isActive ?? true,
       createdById: userId,
       updatedById: userId,
-      items: itemsWithVariants.map(({ productVariant, quantity }) =>
+      items: itemsWithVariants.map(({ productVariant, quantity, unitPrice }) =>
         this.itemRepo.create({
           productVariant: { id: productVariant.id } as any,
           product: { id: productVariant.product.id } as any,
           quantity,
+          unitPrice,
           createdById: userId,
           updatedById: userId,
         }),
@@ -159,6 +161,7 @@ export class ProductPackageService {
       const itemsWithVariants = dto.items.map((i) => ({
         productVariant: variants.find((v) => v.id === i.productVariantId)!,
         quantity: i.quantity,
+        unitPrice: i.unitPrice ?? null,
       }));
 
       const pricing = this.computePackagePricing(itemsWithVariants);
@@ -168,11 +171,12 @@ export class ProductPackageService {
 
       // Full-replace: sil ve yeniden yaz
       await this.itemRepo.delete({ productPackage: { id: pkg.id } });
-      pkg.items = itemsWithVariants.map(({ productVariant, quantity }) =>
+      pkg.items = itemsWithVariants.map(({ productVariant, quantity, unitPrice }) =>
         this.itemRepo.create({
           productVariant: { id: productVariant.id } as any,
           product: { id: productVariant.product.id } as any,
           quantity,
+          unitPrice,
           createdById: userId,
           updatedById: userId,
         }),

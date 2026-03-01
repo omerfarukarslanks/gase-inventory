@@ -20,6 +20,12 @@ export class UpdatePackageItemDto {
   @IsNumber()
   @IsPositive()
   quantity: number;
+
+  @ApiPropertyOptional({ example: 100.00, description: 'Bu variantin paket içindeki birim fiyat katkısı (kısmi iade hesabı için)' })
+  @IsNumber()
+  @IsPositive()
+  @IsOptional()
+  unitPrice?: number;
 }
 
 export class UpdatePackageDto {

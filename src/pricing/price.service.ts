@@ -9,6 +9,7 @@ import { ProductErrors } from '../common/errors/product.errors';
 import { Store } from 'src/store/store.entity';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { Product } from 'src/product/product.entity';
+import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
 
 export interface EffectivePriceParams {
   unitPrice: number | null;
@@ -206,7 +207,6 @@ export class PriceService {
     discountAmount?: number | null;
     taxPercent?: number | null;
     taxAmount?: number | null;
-    lineTotal?: number | null;
     campaignCode?: string | null;
     manager?: EntityManager;
   }): Promise<StoreProductPrice> {
@@ -252,9 +252,6 @@ export class PriceService {
     if (params.taxAmount !== undefined) {
       spp.taxAmount = params.taxAmount;
     }
-    if (params.lineTotal !== undefined) {
-      spp.lineTotal = params.lineTotal;
-    }
     if (params.campaignCode !== undefined) {
       spp.campaignCode = params.campaignCode;
     }
@@ -266,8 +263,17 @@ export class PriceService {
       spp.discountAmount != null ||
       spp.taxPercent != null ||
       spp.taxAmount != null ||
-      spp.lineTotal != null ||
       spp.campaignCode != null;
+
+    const { lineTotal: computedLineTotal } = calculateLineAmounts({
+      quantity: 1,
+      unitPrice: spp.unitPrice != null ? Number(spp.unitPrice) : 0,
+      discountPercent: spp.discountPercent != null ? Number(spp.discountPercent) : null,
+      discountAmount: spp.discountAmount != null ? Number(spp.discountAmount) : null,
+      taxPercent: spp.taxPercent != null ? Number(spp.taxPercent) : null,
+      taxAmount: spp.taxAmount != null ? Number(spp.taxAmount) : null,
+    });
+    spp.lineTotal = computedLineTotal;
 
     spp.isActive = hasAnyOverride;
     spp.updatedById = userId;
@@ -349,7 +355,6 @@ export class PriceService {
     discountAmount?: number | null;
     taxPercent?: number | null;
     taxAmount?: number | null;
-    lineTotal?: number | null;
     campaignCode?: string | null;
     manager?: EntityManager;
   }): Promise<{
@@ -375,7 +380,6 @@ export class PriceService {
           discountAmount: params.discountAmount,
           taxPercent: params.taxPercent,
           taxAmount: params.taxAmount,
-          lineTotal: params.lineTotal,
           campaignCode: params.campaignCode,
           manager: txManager,
         });
@@ -409,7 +413,6 @@ export class PriceService {
     discountAmount?: number | null;
     taxPercent?: number | null;
     taxAmount?: number | null;
-    lineTotal?: number | null;
     campaignCode?: string | null;
   }): Promise<{
     productId: string;
@@ -458,9 +461,6 @@ export class PriceService {
       if (params.taxAmount !== undefined) {
         productDefaultsToUpdate.defaultTaxAmount = params.taxAmount;
       }
-      if (params.lineTotal !== undefined) {
-        productDefaultsToUpdate.defaultLineTotal = params.lineTotal;
-      }
 
       if (Object.keys(productDefaultsToUpdate).length > 0) {
         const productRepo = this.getProductRepo(txManager);
@@ -476,6 +476,15 @@ export class PriceService {
         }
 
         Object.assign(product, productDefaultsToUpdate);
+        const { lineTotal: computedLineTotal } = calculateLineAmounts({
+          quantity: 1,
+          unitPrice: Number(product.defaultSalePrice ?? 0),
+          discountPercent: product.defaultDiscountPercent != null ? Number(product.defaultDiscountPercent) : null,
+          discountAmount: product.defaultDiscountAmount != null ? Number(product.defaultDiscountAmount) : null,
+          taxPercent: product.defaultTaxPercent != null ? Number(product.defaultTaxPercent) : null,
+          taxAmount: product.defaultTaxAmount != null ? Number(product.defaultTaxAmount) : null,
+        });
+        product.defaultLineTotal = computedLineTotal;
         product.updatedById = this.getUserIdOrThrow();
         await productRepo.save(product);
       }
@@ -491,7 +500,6 @@ export class PriceService {
             discountAmount: params.discountAmount,
             taxPercent: params.taxPercent,
             taxAmount: params.taxAmount,
-            lineTotal: params.lineTotal,
             campaignCode: params.campaignCode,
             manager: txManager,
           });

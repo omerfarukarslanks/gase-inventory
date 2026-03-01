@@ -37,8 +37,4 @@ export class PriceFieldsDto {
   @IsOptional()
   taxAmount?: number;
 
-  @ApiPropertyOptional({ example: 1200, description: 'Satir toplami' })
-  @IsNumber()
-  @IsOptional()
-  lineTotal?: number;
 }

@@ -32,6 +32,7 @@ import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
 import { SupplierErrors } from 'src/common/errors/supplier.errors';
 import { ProductCategory } from './product-category.entity';
+import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
 
 type ResolvedAttributeGroup = {
   attributeId: string;
@@ -47,7 +48,6 @@ type PriceInput = {
   discountAmount?: number;
   taxPercent?: number;
   taxAmount?: number;
-  lineTotal?: number;
 };
 
 type ProductVariantListItem = {
@@ -266,6 +266,14 @@ export class ProductService {
   }
 
   private getCreateProductPriceDefaults(input: PriceInput): Partial<Product> {
+    const { lineTotal } = calculateLineAmounts({
+      quantity: 1,
+      unitPrice: input.unitPrice ?? 0,
+      discountPercent: input.discountPercent ?? null,
+      discountAmount: input.discountAmount ?? null,
+      taxPercent: input.taxPercent ?? null,
+      taxAmount: input.taxAmount ?? null,
+    });
     return {
       defaultCurrency: input.currency ?? 'TRY',
       defaultPurchasePrice: input.purchasePrice,
@@ -274,7 +282,7 @@ export class ProductService {
       defaultDiscountAmount: input.discountAmount,
       defaultTaxPercent: input.taxPercent,
       defaultTaxAmount: input.taxAmount,
-      defaultLineTotal: input.lineTotal,
+      defaultLineTotal: lineTotal,
     };
   }
 
@@ -288,7 +296,6 @@ export class ProductService {
     if (input.discountAmount !== undefined) mapped.defaultDiscountAmount = input.discountAmount;
     if (input.taxPercent !== undefined) mapped.defaultTaxPercent = input.taxPercent;
     if (input.taxAmount !== undefined) mapped.defaultTaxAmount = input.taxAmount;
-    if (input.lineTotal !== undefined) mapped.defaultLineTotal = input.lineTotal;
 
     return mapped;
   }
@@ -378,7 +385,6 @@ export class ProductService {
       discountAmount,
       taxPercent,
       taxAmount,
-      lineTotal,
       ...productPayload
     } = dto;
 
@@ -396,7 +402,6 @@ export class ProductService {
         discountAmount,
         taxPercent,
         taxAmount,
-        lineTotal,
       }),
       ...(supplierId ? { supplier: { id: supplierId } as any } : {}),
       ...(categoryId ? { category: { id: categoryId } as any } : {}),
@@ -793,7 +798,6 @@ export class ProductService {
       discountAmount,
       taxPercent,
       taxAmount,
-      lineTotal,
       ...restDto
     } = dto;
     let hasStoreStateChange = false;
@@ -826,8 +830,7 @@ export class ProductService {
         discountPercent !== undefined ||
         discountAmount !== undefined ||
         taxPercent !== undefined ||
-        taxAmount !== undefined ||
-        lineTotal !== undefined;
+        taxAmount !== undefined;
       if (!hasPriceUpdate) {
         return hasStoreStateChange ? this.findOne(id, manager) : product;
       }
@@ -864,12 +867,20 @@ export class ProductService {
         discountAmount,
         taxPercent,
         taxAmount,
-        lineTotal,
       }),
       {
         updatedById: userId,
       },
     );
+    const { lineTotal: computedLineTotal } = calculateLineAmounts({
+      quantity: 1,
+      unitPrice: Number(product.defaultSalePrice ?? 0),
+      discountPercent: product.defaultDiscountPercent != null ? Number(product.defaultDiscountPercent) : null,
+      discountAmount: product.defaultDiscountAmount != null ? Number(product.defaultDiscountAmount) : null,
+      taxPercent: product.defaultTaxPercent != null ? Number(product.defaultTaxPercent) : null,
+      taxAmount: product.defaultTaxAmount != null ? Number(product.defaultTaxAmount) : null,
+    });
+    product.defaultLineTotal = computedLineTotal;
     return repo.save(product);
   }
 

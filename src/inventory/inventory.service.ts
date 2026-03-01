@@ -24,6 +24,7 @@ import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
 import { StockSummaryDto } from './dto/stock-summary.dto';
+import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
 
 @Injectable()
 export class InventoryService {
@@ -493,6 +494,18 @@ export class InventoryService {
       const currency = dto.currency ?? product.defaultCurrency ?? 'TRY';
       const unitPrice = dto.unitPrice ?? product.defaultPurchasePrice ?? 0;
       const taxPercent = dto.taxPercent ?? product.defaultTaxPercent ?? 0;
+      const discountPercent = dto.discountPercent ?? null;
+      const discountAmount = discountPercent != null ? null : (dto.discountAmount ?? null);
+      const taxAmount = taxPercent != 0 ? null : (dto.taxAmount ?? null);
+
+      const { lineTotal } = calculateLineAmounts({
+        quantity: dto.quantity,
+        unitPrice,
+        discountPercent,
+        discountAmount,
+        taxPercent,
+        taxAmount,
+      });
 
       return this.createMovement(
         {
@@ -507,10 +520,10 @@ export class InventoryService {
           currency,
           unitPrice,
           taxPercent,
-          discountPercent: dto.discountPercent,
-          discountAmount: dto.discountAmount,
-          taxAmount: dto.taxAmount,
-          lineTotal: dto.lineTotal,
+          discountPercent: discountPercent ?? undefined,
+          discountAmount: discountAmount ?? undefined,
+          taxAmount: taxAmount ?? undefined,
+          lineTotal,
           campaignCode: dto.campaignCode,
         },
         txManager,
@@ -556,6 +569,20 @@ export class InventoryService {
         });
       }
 
+      // lineTotal her zaman sunucu tarafında hesaplanır
+      const sellDiscountPercent = dto.discountPercent ?? null;
+      const sellDiscountAmount = sellDiscountPercent != null ? null : (dto.discountAmount ?? null);
+      const sellTaxPercent = dto.taxPercent ?? null;
+      const sellTaxAmount = sellTaxPercent != null ? null : (dto.taxAmount ?? null);
+      const { lineTotal } = calculateLineAmounts({
+        quantity: dto.quantity,
+        unitPrice: dto.unitPrice ?? 0,
+        discountPercent: sellDiscountPercent,
+        discountAmount: sellDiscountAmount,
+        taxPercent: sellTaxPercent,
+        taxAmount: sellTaxAmount,
+      });
+
       // OUT hareketi: quantity negatif
       return this.createMovement(
         {
@@ -569,11 +596,11 @@ export class InventoryService {
 
           currency: dto.currency,
           unitPrice: dto.unitPrice,
-          discountPercent: dto.discountPercent,
-          discountAmount: dto.discountAmount,
-          taxPercent: dto.taxPercent,
-          taxAmount: dto.taxAmount,
-          lineTotal: dto.lineTotal,
+          discountPercent: sellDiscountPercent ?? undefined,
+          discountAmount: sellDiscountAmount ?? undefined,
+          taxPercent: sellTaxPercent ?? undefined,
+          taxAmount: sellTaxAmount ?? undefined,
+          lineTotal,
           campaignCode: dto.campaignCode,
 
           saleId: dto.saleId,

@@ -40,11 +40,6 @@ export class PatchSaleLineDto {
   @IsNumber()
   taxAmount?: number;
 
-  @ApiPropertyOptional({ description: 'Satır toplam tutarı', example: 900 })
-  @IsOptional()
-  @IsNumber()
-  lineTotal?: number;
-
   @ApiPropertyOptional({ description: 'Para birimi', example: 'TRY' })
   @IsOptional()
   @IsIn(['TRY', 'USD', 'EUR'])

@@ -54,11 +54,6 @@ export class CreateSaleLineDto {
   @IsNumber()
   taxAmount?: number;
 
-  @ApiPropertyOptional({ description: 'Satış satırı toplam tutarı', example: 1200 })
-  @IsOptional()
-  @IsNumber()
-  lineTotal?: number;
-
   @ApiPropertyOptional({ description: 'Kampanya kodu', example: 'CAMP-SUMMER2025' })
   @IsOptional()
   @IsString({ message: 'campaignCode metni olmalıdır' })
