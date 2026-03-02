@@ -11,10 +11,8 @@ import { InventoryService } from './inventory.service';
 import { ReceiveStockDto } from './dto/receive-stock.dto';
 import { TransferStockDto } from './dto/transfer-stock.dto';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
-import { SellStockDto } from './dto/sell-stock.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { ListMovementsQueryDto } from './dto/list-movements.dto';
-import { BulkReceiveStockDto } from './dto/bulk-receive-stock.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
 import { StockSummaryDto } from './dto/stock-summary.dto';
@@ -34,25 +32,11 @@ export class InventoryController {
     return this.inventoryService.receiveStock(dto);
   }
 
-  // Toplu stok girişi
-  @Post('receive/bulk')
-  @ApiOperation({ summary: 'Toplu stok girişi (birden fazla satır)' })
-  bulkReceiveStock(@Body() dto: BulkReceiveStockDto) {
-    return this.inventoryService.bulkReceiveStock(dto);
-  }
-
   // Mağazalar arası transfer
   @Post('transfer')
   @ApiOperation({ summary: 'Mağazalar arası stok transferi' })
   transferStock(@Body() dto: TransferStockDto) {
     return this.inventoryService.transferStock(dto);
-  }
-
-  // Stok çıkışı (satış, iade vs.)
-  @Post('sell')
-  @ApiOperation({ summary: 'Mağazadan stok çıkışı (satış / iade)' })
-  sell(@Body() dto: SellStockDto) {
-    return this.inventoryService.sellFromStore(dto);
   }
 
   // Stok düzeltme

@@ -85,4 +85,11 @@ export class InventoryMovement extends AuditableEntity {
 
   @Column({ nullable: true })
   saleLineId?: string;
+
+  /**
+   * Stok girişinin yapıldığı tedarikçi ID (yalnızca MovementType.IN hareketleri için anlamlıdır).
+   * @ManyToOne ilişkisi tutulmaz; cross-module döngüsel bağımlılığı önlemek için sade UUID kolonu.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  supplierId?: string;
 }
