@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npx tsc --noEmit)",
-      "Bash(npm run build)"
+      "Bash(npm run build)",
+      "Bash(node_modules/.bin/tsc:*)",
+      "Bash(/usr/local/bin/node node_modules/.bin/tsc:*)",
+      "Bash(source ~/.zshrc)",
+      "Bash(/Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/node:*)"
     ]
   }
 }
