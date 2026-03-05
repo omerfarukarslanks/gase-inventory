@@ -29,11 +29,17 @@ export const Permissions = {
   PRODUCT_CREATE:           'PRODUCT_CREATE',
   PRODUCT_UPDATE:           'PRODUCT_UPDATE',
   PRODUCT_DELETE:           'PRODUCT_DELETE',
-  PRODUCT_VARIANT_MANAGE:   'PRODUCT_VARIANT_MANAGE',
+
+  PRODUCT_VARIANT_CREATE:   'PRODUCT_VARIANT_CREATE',
+  PRODUCT_VARIANT_UPDATE:   'PRODUCT_VARIANT_UPDATE',
+
   PRODUCT_BARCODE_LOOKUP:   'PRODUCT_BARCODE_LOOKUP',
   PRODUCT_CATEGORY_MANAGE:  'PRODUCT_CATEGORY_MANAGE',
   PRODUCT_PACKAGE_MANAGE:   'PRODUCT_PACKAGE_MANAGE',
-  PRODUCT_ATTRIBUTE_MANAGE: 'PRODUCT_ATTRIBUTE_MANAGE',
+
+  PRODUCT_ATTRIBUTE_READ: 'PRODUCT_ATTRIBUTE_READ',
+  PRODUCT_ATTRIBUTE_UPDATE: 'PRODUCT_ATTRIBUTE_UPDATE',
+  PRODUCT_ATTRIBUTE_CREATE: 'PRODUCT_ATTRIBUTE_CREATE',
 
   // ─── Fiyat ──────────────────────────────────────────
   PRICE_READ:   'PRICE_READ',
@@ -58,7 +64,8 @@ export const Permissions = {
 
   // ─── Müşteri ────────────────────────────────────────
   CUSTOMER_READ:   'CUSTOMER_READ',
-  CUSTOMER_MANAGE: 'CUSTOMER_MANAGE',
+  CUSTOMER_CREATE:   'CUSTOMER_CREATE',
+  CUSTOMER_UPDATE:   'CUSTOMER_UPDATE',
 
   // ─── Raporlar ───────────────────────────────────────
   REPORT_STOCK_READ:     'REPORT_STOCK_READ',
@@ -102,11 +109,20 @@ export const PERMISSION_META: Record<
   PRODUCT_CREATE:           { group: 'Ürün', description: 'Yeni ürün oluşturma' },
   PRODUCT_UPDATE:           { group: 'Ürün', description: 'Ürün/varyant güncelleme' },
   PRODUCT_DELETE:           { group: 'Ürün', description: 'Ürün/varyant silme (pasife alma)' },
-  PRODUCT_VARIANT_MANAGE:   { group: 'Ürün', description: 'Ürün varyantı oluşturma/güncelleme' },
+  
+  PRODUCT_VARIANT_CREATE:   { group: 'Ürün', description: 'Ürün varyantı oluşturma' },
+  PRODUCT_VARIANT_UPDATE:   { group: 'Ürün', description: 'Ürün varyantı güncelleme' },
+
+
+
   PRODUCT_BARCODE_LOOKUP:   { group: 'Ürün', description: 'Barkod ile ürün arama' },
   PRODUCT_CATEGORY_MANAGE:  { group: 'Ürün', description: 'Ürün kategorisi yönetimi' },
   PRODUCT_PACKAGE_MANAGE:   { group: 'Ürün', description: 'Ürün paketi yönetimi' },
-  PRODUCT_ATTRIBUTE_MANAGE: { group: 'Ürün', description: 'Ürün özelliği (attribute) yönetimi' },
+
+  PRODUCT_ATTRIBUTE_READ: { group: 'Ürün', description: 'Ürün özelliği(attribute) listeleme'},
+  PRODUCT_ATTRIBUTE_UPDATE: { group: 'Ürün', description: 'Ürün özelliği (attribute) güncelleme'},
+  PRODUCT_ATTRIBUTE_CREATE: { group: 'Ürün', description: 'Ürün özelliği (attribute) oluşturma'},
+
 
   PRICE_READ:   { group: 'Fiyat', description: 'Mağaza fiyatlarını görüntüleme' },
   PRICE_MANAGE: { group: 'Fiyat', description: 'Mağaza bazlı fiyat/vergi/indirim tanımlama' },
@@ -126,7 +142,8 @@ export const PERMISSION_META: Record<
   SUPPLIER_MANAGE: { group: 'Tedarikçi', description: 'Tedarikçi oluşturma/güncelleme/silme' },
 
   CUSTOMER_READ:   { group: 'Müşteri', description: 'Müşteri listeleme, görüntüleme ve bakiye' },
-  CUSTOMER_MANAGE: { group: 'Müşteri', description: 'Müşteri oluşturma/güncelleme/silme' },
+  CUSTOMER_CREATE: { group: 'Müşteri', description: 'Müşteri oluşturma' },
+  CUSTOMER_UPDATE: { group: 'Müşteri', description: 'Müşteri güncelleme' },
 
   REPORT_STOCK_READ:     { group: 'Raporlar', description: 'Stok raporlarını görüntüleme' },
   REPORT_SALES_READ:     { group: 'Raporlar', description: 'Satış raporlarını görüntüleme' },
@@ -157,7 +174,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.PRODUCT_READ,
     Permissions.PRODUCT_BARCODE_LOOKUP,
     Permissions.CUSTOMER_READ,
-    Permissions.CUSTOMER_MANAGE,
     Permissions.STORE_READ,
     Permissions.EXCHANGE_RATE_READ,
     Permissions.AI_CHAT,
@@ -181,14 +197,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.PRODUCT_READ,
     Permissions.PRODUCT_CREATE,
     Permissions.PRODUCT_UPDATE,
-    Permissions.PRODUCT_VARIANT_MANAGE,
     Permissions.PRODUCT_BARCODE_LOOKUP,
     Permissions.PRODUCT_CATEGORY_MANAGE,
     Permissions.PRODUCT_PACKAGE_MANAGE,
     Permissions.PRICE_READ,
     Permissions.SUPPLIER_READ,
     Permissions.CUSTOMER_READ,
-    Permissions.CUSTOMER_MANAGE,
     Permissions.STORE_READ,
     Permissions.REPORT_STOCK_READ,
     Permissions.REPORT_SALES_READ,
@@ -219,11 +233,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.PRODUCT_CREATE,
     Permissions.PRODUCT_UPDATE,
     Permissions.PRODUCT_DELETE,
-    Permissions.PRODUCT_VARIANT_MANAGE,
     Permissions.PRODUCT_BARCODE_LOOKUP,
     Permissions.PRODUCT_CATEGORY_MANAGE,
     Permissions.PRODUCT_PACKAGE_MANAGE,
-    Permissions.PRODUCT_ATTRIBUTE_MANAGE,
     Permissions.PRICE_READ,
     Permissions.PRICE_MANAGE,
     Permissions.STORE_READ,
@@ -232,7 +244,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.SUPPLIER_READ,
     Permissions.SUPPLIER_MANAGE,
     Permissions.CUSTOMER_READ,
-    Permissions.CUSTOMER_MANAGE,
     Permissions.USER_READ,
     Permissions.USER_CREATE,
     Permissions.USER_UPDATE,

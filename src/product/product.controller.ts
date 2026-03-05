@@ -79,7 +79,7 @@ export class ProductController {
 
   @Post(':id/variants')
   @ApiOperation({ summary: 'Attribute secimlerine gore urun varyantlarini olustur/guncelle' })
-  @RequirePermission(Permissions.PRODUCT_VARIANT_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_VARIANT_CREATE)
   syncVariants(
     @Param('id', ParseUUIDPipe) productId: string,
     @Body() dto: CreateVariantDto,
@@ -108,7 +108,7 @@ export class ProductController {
 
   @Patch(':id/variants/:variantId')
   @ApiOperation({ summary: 'Urun varyantini guncelle' })
-  @RequirePermission(Permissions.PRODUCT_VARIANT_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_VARIANT_UPDATE)
   updateVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,
@@ -119,7 +119,7 @@ export class ProductController {
 
   @Delete(':id/variants/:variantId')
   @ApiOperation({ summary: 'Urun varyantini pasife al' })
-  @RequirePermission(Permissions.PRODUCT_DELETE)
+  @RequirePermission(Permissions.PRODUCT_VARIANT_UPDATE)
   removeVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,

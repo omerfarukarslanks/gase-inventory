@@ -1,8 +1,16 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsOptional, Max, Min } from 'class-validator';
+import { IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
 
 export class ListQueryDto {
+  @ApiPropertyOptional({
+    example: 'stock',
+    description: 'name, description veya group içinde arama yapar (büyük/küçük harf duyarsız)',
+  })
+  @IsOptional()
+  @IsString()
+  search?: string;
+
   @ApiPropertyOptional({
     default: 1,
     minimum: 1,

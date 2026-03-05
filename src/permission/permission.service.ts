@@ -1,12 +1,11 @@
 import {
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
   OnApplicationBootstrap,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { ILike, Repository } from 'typeorm';
 import { Permission } from './permission.entity';
 import { RolePermission } from './role-permission.entity';
 import { Role } from './role.entity';
@@ -158,8 +157,16 @@ export class PermissionService implements OnApplicationBootstrap {
 
   async createPermission(dto: CreatePermissionDto): Promise<Permission> {
     const existing = await this.permRepo.findOne({ where: { name: dto.name } });
+
     if (existing) {
-      throw new ConflictException(`'${dto.name}' adında bir yetki zaten mevcut.`);
+      // Zaten varsa description / group / isActive güncelle (upsert)
+      if (dto.description !== undefined) existing.description = dto.description;
+      if (dto.group !== undefined) existing.group = dto.group;
+      if (dto.isActive !== undefined) {
+        existing.isActive = dto.isActive;
+        this.invalidateAllCache();
+      }
+      return this.permRepo.save(existing);
     }
 
     return this.permRepo.save(
@@ -196,14 +203,23 @@ export class PermissionService implements OnApplicationBootstrap {
     const order = { group: 'ASC' as const, name: 'ASC' as const };
     const isPaginated = query.page !== undefined || query.limit !== undefined;
 
+    const where = query.search
+      ? [
+          { name: ILike(`%${query.search}%`) },
+          { description: ILike(`%${query.search}%`) },
+          { group: ILike(`%${query.search}%`) },
+        ]
+      : undefined;
+
     if (!isPaginated) {
-      const data = await this.permRepo.find({ order });
+      const data = await this.permRepo.find({ where, order });
       return { data, meta: { total: data.length } };
     }
 
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const [data, total] = await this.permRepo.findAndCount({
+      where,
       order,
       skip: (page - 1) * limit,
       take: limit,

@@ -40,14 +40,14 @@ export class AttributeController {
 
   @Post()
   @ApiOperation({ summary: 'Yeni attribute olustur' })
-  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_CREATE)
   create(@Body() dto: CreateAttributeDto) {
     return this.attributeService.createAttribute(dto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Tum attributeleri listele (degerleriyle)' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_READ)
   findAll() {
     return this.attributeService.findAllAttributes();
   }
@@ -55,7 +55,7 @@ export class AttributeController {
   @Get('paginated')
   @ApiOperation({ summary: 'Attribute listesini sayfali getir' })
   @ApiOkResponse({ type: PaginatedAttributesResponse })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_READ)
   findAllPaginated(
     @Query() query: ListAttributesQueryDto,
   ): Promise<PaginatedAttributesResponse> {
@@ -64,14 +64,14 @@ export class AttributeController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Belirli bir attribute getir' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_READ)
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.attributeService.findOneAttribute(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Attribute guncelle' })
-  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_UPDATE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAttributeDto,
@@ -81,7 +81,7 @@ export class AttributeController {
 
   @Delete()
   @ApiOperation({ summary: 'Attribute adina gore pasife al (soft delete)' })
-  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_UPDATE)
   remove(@Body() dto: RemoveAttributeDto) {
     return this.attributeService.removeAttribute(dto);
   }
@@ -89,7 +89,7 @@ export class AttributeController {
   @Post(':attributeValue/values')
   @ApiOperation({ summary: 'Attribute value alanina deger(ler) ekle' })
   @ApiBody({ type: CreateAttributeValueDto, isArray: true })
-  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_CREATE)
   addValues(
     @Param('attributeValue', ParseIntPipe) attributeValue: number,
     @Body(new ParseArrayPipe({ items: CreateAttributeValueDto }))
@@ -100,7 +100,7 @@ export class AttributeController {
 
   @Patch('values/:id')
   @ApiOperation({ summary: 'Attribute value guncelle' })
-  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_UPDATE)
   updateValue(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateAttributeValueDto,
@@ -110,7 +110,7 @@ export class AttributeController {
 
   @Delete(':attributeValue/values')
   @ApiOperation({ summary: 'Attribute value ad/deger bilgisi ile pasife al' })
-  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_ATTRIBUTE_UPDATE)
   removeValue(
     @Param('attributeValue', ParseIntPipe) attributeValue: number,
     @Body() dto: CreateAttributeValueDto,

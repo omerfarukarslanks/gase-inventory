@@ -33,7 +33,7 @@ export class CustomerController {
 
   @Post()
   @ApiOperation({ summary: 'Yeni müşteri oluştur' })
-  @RequirePermission(Permissions.CUSTOMER_MANAGE)
+  @RequirePermission(Permissions.CUSTOMER_CREATE)
   create(@Body() dto: CreateCustomerDto) {
     return this.customerService.create(dto);
   }
@@ -54,7 +54,7 @@ export class CustomerController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Müşteriyi güncelle' })
-  @RequirePermission(Permissions.CUSTOMER_MANAGE)
+  @RequirePermission(Permissions.CUSTOMER_UPDATE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateCustomerDto,
@@ -65,7 +65,7 @@ export class CustomerController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Müşteriyi pasife al (soft delete)' })
-  @RequirePermission(Permissions.CUSTOMER_MANAGE)
+  @RequirePermission(Permissions.CUSTOMER_UPDATE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.customerService.remove(id);
   }
