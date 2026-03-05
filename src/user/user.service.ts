@@ -14,6 +14,7 @@ import { generateRandomStoreName } from 'src/common/utils/random-store-name';
 import { StoreErrors } from 'src/common/errors/store.errors';
 import { ListUsersDto, PaginatedUsersResponse } from './dto/list-users.dto';
 import { StoreType } from 'src/common/constants/store-type.constants';
+import { PermissionService } from 'src/permission/permission.service';
 
 @Injectable()
 export class UsersService {
@@ -26,6 +27,7 @@ export class UsersService {
     private readonly storesService: StoresService,
     private readonly appContext: AppContextService,
     private readonly dataSource: DataSource,
+    private readonly permissionService: PermissionService,
 
     @InjectRepository(UserStore)
     private readonly userStoreRepo: Repository<UserStore>,
@@ -60,8 +62,9 @@ export class UsersService {
   }) {
 
     const userId = this.appContext.getUserIdOrNull();
-    // Transaction dışından -> sadece çağrı
-    return this.dataSource.transaction(async (manager) => {
+    let createdTenantId: string;
+
+    const savedUser = await this.dataSource.transaction(async (manager) => {
 
       // 🔹 Transaction içindeki repo'lar
       const userRepo = manager.getRepository(User);
@@ -73,6 +76,7 @@ export class UsersService {
         slugify(input.tenantName),
         manager
       );
+      createdTenantId = tenant.id;
 
       const randomName = generateRandomStoreName(tenant.name);
       // 2) Default store oluştur
@@ -129,6 +133,11 @@ export class UsersService {
 
       return savedUser;
     });
+
+    // Transaction tamamlandıktan sonra varsayılan permission'ları seed et
+    await this.permissionService.ensureDefaultPermissionsForTenant(createdTenantId!);
+
+    return savedUser;
   }
 
   /**
@@ -143,8 +152,9 @@ export class UsersService {
     authProviderId: string;
   }): Promise<User> {
     const userId = this.appContext.getUserIdOrNull();
+    let createdTenantId: string;
 
-    return this.dataSource.transaction(async (manager) => {
+    const savedUser = await this.dataSource.transaction(async (manager) => {
       const userRepo = manager.getRepository(User);
       const userStoreRepo = manager.getRepository(UserStore);
 
@@ -161,6 +171,7 @@ export class UsersService {
         slugify(tenantName),
         manager,
       );
+      createdTenantId = tenant.id;
 
       const randomName = generateRandomStoreName(tenant.name);
       const store = await this.storesService.createDefaultStoreForTenant(tenant, randomName, manager);
@@ -202,6 +213,11 @@ export class UsersService {
 
       return savedUser;
     });
+
+    // Transaction tamamlandıktan sonra varsayılan permission'ları seed et
+    await this.permissionService.ensureDefaultPermissionsForTenant(createdTenantId!);
+
+    return savedUser;
   }
 
   async validateUser(email: string, password: string): Promise<User | null> {

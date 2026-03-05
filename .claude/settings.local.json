@@ -6,7 +6,22 @@
       "Bash(node_modules/.bin/tsc:*)",
       "Bash(/usr/local/bin/node node_modules/.bin/tsc:*)",
       "Bash(source ~/.zshrc)",
-      "Bash(/Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/node:*)"
+      "Bash(/Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/node:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/inventory/inventory.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/sales/sales.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/product/product.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/store/store.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/user/user.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/supplier/supplier.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/customer/customer.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/attribute/attribute.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/pricing/store-product-prices.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/exchange-rate/exchange-rate.controller.ts:*)",
+      "Bash(/Users/omerfarukarslan/Desktop/projects/gase-inventory/src/reports/reports.controller.ts:*)",
+      "Bash(/usr/local/bin/npx tsc:*)",
+      "Bash(ls:*)",
+      "Bash(/Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/npx tsc --noEmit)",
+      "Bash(arch -arm64 /Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/node /Users/omerfarukarslan/Desktop/projects/gase-inventory/node_modules/.bin/tsc:*)"
     ]
   }
 }

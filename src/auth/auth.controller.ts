@@ -10,7 +10,9 @@ import { ForgotPasswordDto, ResetPasswordDto } from './dto/refresh-password.dto'
 import { GoogleAuthGuard } from './guards/google-auth.guard';
 import { MicrosoftAuthGuard } from './guards/microsoft-auth.guard';
 import type { Response } from 'express';
+import { Public } from 'src/common/decorators/public.decorator';
 
+@Public()
 @Controller('auth')
 export class AuthController {
   constructor(

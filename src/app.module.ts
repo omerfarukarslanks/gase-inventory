@@ -7,7 +7,7 @@ import { TenantModule } from './tenant/tenant.module';
 import { StoreModule } from './store/store.module';
 import { UserModule } from './user/user.module';
 import { AuthModule } from './auth/auth.module';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ClsModule } from 'nestjs-cls';
 import type { Request } from 'express';
 import { ClsContextInterceptor } from './common/interceptors/cls-context.interceptor';
@@ -26,6 +26,9 @@ import { CustomerModule } from './customer/customer.module';
 import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ProductPackageModule } from './product-package/product-package.module';
+import { PermissionModule } from './permission/permission.module';
+import { JwtAuthGuard } from './auth/jwt.auth.guard';
+import { PermissionGuard } from './common/guards/permission.guard';
 
 @Module({
   imports: [
@@ -98,6 +101,7 @@ import { ProductPackageModule } from './product-package/product-package.module';
     ScheduleModule.forRoot(),
     ExchangeRateModule,
     ProductPackageModule,
+    PermissionModule,
   ],
   controllers: [AppController],
   providers: [
@@ -109,6 +113,15 @@ import { ProductPackageModule } from './product-package/product-package.module';
     {
       provide: APP_FILTER,
       useClass: AllExceptionsFilter,
+    },
+    // Global guard sırası: önce JWT doğrulama, sonra yetki kontrolü
+    {
+      provide: APP_GUARD,
+      useClass: JwtAuthGuard,
+    },
+    {
+      provide: APP_GUARD,
+      useClass: PermissionGuard,
     },
   ],
 })

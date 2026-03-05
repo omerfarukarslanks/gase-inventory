@@ -4,16 +4,20 @@ import { ApiOperation } from '@nestjs/swagger/dist/decorators/api-operation.deco
 import { ApiTags } from '@nestjs/swagger/dist/decorators/api-use-tags.decorator';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { ExchangeRateService } from './exchange-rate.service';
+import { RequirePermission } from 'src/common/decorators/require-permission.decorator';
+import { PermissionGuard } from 'src/common/guards/permission.guard';
+import { Permissions } from 'src/permission/constants/permissions.constants';
 
 @ApiTags('Exchange Rates')
 @ApiBearerAuth('access-token')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 @Controller('exchange-rates')
 export class ExchangeRateController {
   constructor(private readonly service: ExchangeRateService) {}
 
   @Get()
   @ApiOperation({ summary: 'Güncel döviz kurlarını listele (USD/TRY, EUR/TRY)' })
+  @RequirePermission(Permissions.EXCHANGE_RATE_READ)
   getAll() {
     return this.service.getAllRates();
   }

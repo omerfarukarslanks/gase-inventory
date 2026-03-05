@@ -18,43 +18,48 @@ import { ProductCategoryService } from './product-category.service';
 import { CreateProductCategoryDto } from './dto/create-product-category.dto';
 import { UpdateProductCategoryDto } from './dto/update-product-category.dto';
 import { ListProductCategoriesQueryDto } from './dto/list-product-categories.dto';
+import { RequirePermission } from 'src/common/decorators/require-permission.decorator';
+import { PermissionGuard } from 'src/common/guards/permission.guard';
+import { Permissions } from 'src/permission/constants/permissions.constants';
 
 @ApiTags('Product Categories')
 @ApiBearerAuth('access-token')
 @Controller('product-categories')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 export class ProductCategoryController {
   constructor(private readonly categoryService: ProductCategoryService) {}
 
   @Post()
   @ApiOperation({ summary: 'Yeni kategori oluştur' })
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_MANAGE)
   create(@Body() dto: CreateProductCategoryDto) {
     return this.categoryService.create(dto);
   }
 
   @Get()
-  @ApiOperation({
-    summary:
-      'Kategorileri listele (page/limit verilirse sayfali doner, verilmezse tum listeyi doner)',
-  })
+  @ApiOperation({ summary: 'Kategorileri listele' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   findAll(@Query() query: ListProductCategoriesQueryDto) {
     return this.categoryService.findAll(query);
   }
 
   @Get('tree')
   @ApiOperation({ summary: 'Kategorileri ağaç yapısıyla getir (children iç içe)' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   findTree() {
     return this.categoryService.findTree();
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Tek kategori getir' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.categoryService.findOneOrThrow(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Kategori güncelle' })
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_MANAGE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductCategoryDto,
@@ -64,6 +69,7 @@ export class ProductCategoryController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Kategori pasife al' })
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_MANAGE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.categoryService.remove(id);
   }

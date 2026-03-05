@@ -20,37 +20,41 @@ import { SupplierService } from './supplier.service';
 import { CreateSupplierDto } from './dto/create-supplier.dto';
 import { UpdateSupplierDto } from './dto/update-supplier.dto';
 import { ListSuppliersQueryDto } from './dto/list-suppliers.dto';
+import { RequirePermission } from 'src/common/decorators/require-permission.decorator';
+import { PermissionGuard } from 'src/common/guards/permission.guard';
+import { Permissions } from 'src/permission/constants/permissions.constants';
 
 @ApiTags('Suppliers')
 @ApiBearerAuth('access-token')
 @Controller('suppliers')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 export class SupplierController {
   constructor(private readonly supplierService: SupplierService) {}
 
   @Post()
   @ApiOperation({ summary: 'Yeni tedarikçi oluştur' })
+  @RequirePermission(Permissions.SUPPLIER_MANAGE)
   create(@Body() dto: CreateSupplierDto) {
     return this.supplierService.create(dto);
   }
 
   @Get()
-  @ApiOperation({
-    summary:
-      'Tedarikçileri listele (page/limit verilirse sayfalı döner, verilmezse tümü döner)',
-  })
+  @ApiOperation({ summary: 'Tedarikçileri listele' })
+  @RequirePermission(Permissions.SUPPLIER_READ)
   findAll(@Query() query: ListSuppliersQueryDto) {
     return this.supplierService.findAll(query);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Belirli bir tedarikçiyi getir' })
+  @RequirePermission(Permissions.SUPPLIER_READ)
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.supplierService.findOne(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Tedarikçiyi güncelle' })
+  @RequirePermission(Permissions.SUPPLIER_MANAGE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateSupplierDto,
@@ -61,6 +65,7 @@ export class SupplierController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Tedarikçiyi pasife al (soft delete)' })
+  @RequirePermission(Permissions.SUPPLIER_MANAGE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.supplierService.remove(id);
   }

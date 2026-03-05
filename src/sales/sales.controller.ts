@@ -28,43 +28,48 @@ import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { CreateSaleReturnDto } from './dto/create-sale-return.dto';
 import { PatchSaleLineDto } from './dto/patch-sale-line.dto';
 import { CreateSaleLineDto } from './dto/create-sale-line.dto';
+import { RequirePermission } from 'src/common/decorators/require-permission.decorator';
+import { PermissionGuard } from 'src/common/guards/permission.guard';
+import { Permissions } from 'src/permission/constants/permissions.constants';
 
 @ApiTags('Sales')
 @ApiBearerAuth('access-token')
 @Controller('sales')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 export class SalesController {
   constructor(private readonly salesService: SalesService) {}
 
   @Post()
   @ApiOperation({ summary: 'Yeni satış fişi oluştur ve stok düş' })
+  @RequirePermission(Permissions.SALE_CREATE)
   createSale(@Body() dto: CreateSaleDto) {
     return this.salesService.createSale(dto);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Satış fişini detaylarıyla getir' })
+  @RequirePermission(Permissions.SALE_READ)
   getSale(@Param('id') id: string) {
     return this.salesService.findOne(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Satış fişini düzenle' })
+  @RequirePermission(Permissions.SALE_UPDATE)
   updateSale(@Param('id') id: string, @Body() dto: UpdateSaleDto) {
     return this.salesService.updateSale(id, dto);
   }
 
   @Get()
-  @ApiOperation({
-    summary:
-      'Satis fislerini getir (context storeId varsa o store; yoksa storeIds filtresi; o da yoksa tenant geneli)',
-  })
+  @ApiOperation({ summary: 'Satış fişlerini getir (context storeId > storeIds > tenant geneli)' })
+  @RequirePermission(Permissions.SALE_READ)
   getSalesForStore(@Query() query: ListSalesForStoreQueryDto) {
     return this.salesService.findAllForStore(query);
   }
 
   @Post(':id/cancel')
   @ApiOperation({ summary: 'Satış fişini iptal et ve stok iadesi yap' })
+  @RequirePermission(Permissions.SALE_CANCEL)
   cancelSale(@Param('id') id: string, @Body() dto: CancelSaleDto) {
     return this.salesService.cancelSale(id, dto);
   }
@@ -73,12 +78,14 @@ export class SalesController {
 
   @Get(':id/payments')
   @ApiOperation({ summary: 'Satış fişinin ödeme kayıtlarını listele' })
+  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
   listPayments(@Param('id', ParseUUIDPipe) id: string) {
     return this.salesService.listPayments(id);
   }
 
   @Post(':id/payments')
   @ApiOperation({ summary: 'Satış fişine ödeme kaydı ekle' })
+  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AddPaymentDto,
@@ -87,7 +94,8 @@ export class SalesController {
   }
 
   @Patch(':id/payments/:paymentId')
-  @ApiOperation({ summary: 'Ödeme kaydını güncelle (eski kayıt iptal → yeni kayıt açılır)' })
+  @ApiOperation({ summary: 'Ödeme kaydını güncelle' })
+  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
   updatePayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('paymentId', ParseUUIDPipe) paymentId: string,
@@ -98,7 +106,8 @@ export class SalesController {
 
   @Delete(':id/payments/:paymentId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Ödeme kaydını iptal et (soft-cancel) ve kalan tutarı güncelle' })
+  @ApiOperation({ summary: 'Ödeme kaydını iptal et (soft-cancel)' })
+  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
   deletePayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('paymentId', ParseUUIDPipe) paymentId: string,
@@ -106,10 +115,11 @@ export class SalesController {
     return this.salesService.deletePayment(id, paymentId);
   }
 
-  // ---- Satır düzenleme (cerrahi) ----
+  // ---- Satır düzenleme ----
 
   @Post(':id/lines')
   @ApiOperation({ summary: 'Mevcut satış fişine yeni satır ekle ve stok düş' })
+  @RequirePermission(Permissions.SALE_LINE_MANAGE)
   addSaleLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateSaleLineDto,
@@ -118,10 +128,8 @@ export class SalesController {
   }
 
   @Patch(':id/lines/:lineId')
-  @ApiOperation({
-    summary:
-      'Satış satırını cerrahi güncelle — quantity değişirse stok farkı otomatik ayarlanır; ürün kimliği değiştirilemez',
-  })
+  @ApiOperation({ summary: 'Satış satırını güncelle — quantity değişirse stok farkı ayarlanır' })
+  @RequirePermission(Permissions.SALE_LINE_MANAGE)
   updateSaleLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('lineId', ParseUUIDPipe) lineId: string,
@@ -132,9 +140,8 @@ export class SalesController {
 
   @Delete(':id/lines/:lineId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({
-    summary: 'Satış satırını sil — stok iade edilir, satış toplamları güncellenir (son satır ve iade olan satır silinemez)',
-  })
+  @ApiOperation({ summary: 'Satış satırını sil — stok iade edilir' })
+  @RequirePermission(Permissions.SALE_LINE_MANAGE)
   removeSaleLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('lineId', ParseUUIDPipe) lineId: string,
@@ -145,9 +152,8 @@ export class SalesController {
   // ---- Kısmi İade ----
 
   @Post(':id/returns')
-  @ApiOperation({
-    summary: 'Satıştan kısmi iade oluştur — seçili satırları belirtilen miktarda iade eder, stoklar geri yüklenir',
-  })
+  @ApiOperation({ summary: 'Satıştan kısmi iade oluştur — seçili satırları iade eder, stoklar geri yüklenir' })
+  @RequirePermission(Permissions.SALE_RETURN)
   createReturn(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateSaleReturnDto,
@@ -157,6 +163,7 @@ export class SalesController {
 
   @Get(':id/returns')
   @ApiOperation({ summary: 'Satışa ait tüm iade kayıtlarını listele' })
+  @RequirePermission(Permissions.SALE_READ)
   listReturns(@Param('id', ParseUUIDPipe) id: string) {
     return this.salesService.listSaleReturns(id);
   }
@@ -165,6 +172,7 @@ export class SalesController {
 
   @Get(':id/receipt')
   @ApiOperation({ summary: 'Satış fişini PDF olarak indir (80mm termal yazıcı formatı)' })
+  @RequirePermission(Permissions.SALE_RECEIPT_READ)
   async downloadReceipt(
     @Param('id', ParseUUIDPipe) id: string,
     @Res() res: Response,

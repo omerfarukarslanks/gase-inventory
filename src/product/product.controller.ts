@@ -21,46 +21,48 @@ import { ListVariantsDto } from './dto/list-variants.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { UpdateVariantDto } from './dto/update-variant.dto';
 import { ProductService } from './product.service';
+import { RequirePermission } from 'src/common/decorators/require-permission.decorator';
+import { PermissionGuard } from 'src/common/guards/permission.guard';
+import { Permissions } from 'src/permission/constants/permissions.constants';
 
 @ApiTags('Products')
 @ApiBearerAuth('access-token')
 @Controller('products')
-@UseGuards(JwtAuthGuard)
+@UseGuards(JwtAuthGuard, PermissionGuard)
 export class ProductController {
   constructor(private readonly productsService: ProductService) {}
 
   @Post()
   @ApiOperation({ summary: 'Yeni urun olustur' })
+  @RequirePermission(Permissions.PRODUCT_CREATE)
   create(@Body() dto: CreateProductDto) {
     return this.productsService.createProduct(dto);
   }
 
   @Get()
-  @ApiOperation({
-    summary:
-      'Urunleri listele (tokenda storeId varsa o magazaya bagli urunler, yoksa tenant urunleri)',
-  })
+  @ApiOperation({ summary: 'Urunleri listele' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   findAll(@Query() query: ListProductsDto) {
     return this.productsService.findAll(query);
   }
 
   @Get('variants/lookup')
   @ApiOperation({ summary: 'Barkoda gore urun varyanti bul (tenant kapsaminda)' })
+  @RequirePermission(Permissions.PRODUCT_BARCODE_LOOKUP)
   lookupByBarcode(@Query('barcode') barcode: string) {
     return this.productsService.lookupByBarcode(barcode?.trim() ?? '');
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Belirli bir urunu getir' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.findOne(id);
   }
 
   @Patch(':id')
-  @ApiOperation({
-    summary:
-      'Belirli bir urunu guncelle (token storeId varsa isActive store bazli uygulanir)',
-  })
+  @ApiOperation({ summary: 'Belirli bir urunu guncelle' })
+  @RequirePermission(Permissions.PRODUCT_UPDATE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductDto,
@@ -69,16 +71,15 @@ export class ProductController {
   }
 
   @Delete(':id')
-  @ApiOperation({
-    summary:
-      'Belirli bir urunu pasife al (token storeId varsa yalnizca o store, yoksa tum tenant/storelar)',
-  })
+  @ApiOperation({ summary: 'Belirli bir urunu pasife al' })
+  @RequirePermission(Permissions.PRODUCT_DELETE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.productsService.remove(id);
   }
 
   @Post(':id/variants')
   @ApiOperation({ summary: 'Attribute secimlerine gore urun varyantlarini olustur/guncelle' })
+  @RequirePermission(Permissions.PRODUCT_VARIANT_MANAGE)
   syncVariants(
     @Param('id', ParseUUIDPipe) productId: string,
     @Body() dto: CreateVariantDto,
@@ -87,10 +88,8 @@ export class ProductController {
   }
 
   @Get(':id/variants')
-  @ApiOperation({
-    summary:
-      'Urunun varyantlarini listele (tokenda storeId varsa o magazaya bagli varyantlar, yoksa tum varyantlar)',
-  })
+  @ApiOperation({ summary: 'Urunun varyantlarini listele' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   listVariants(
     @Param('id', ParseUUIDPipe) productId: string,
     @Query() query: ListVariantsDto,
@@ -100,6 +99,7 @@ export class ProductController {
 
   @Get(':id/attributes')
   @ApiOperation({ summary: 'Urunun attribute secimlerini getir' })
+  @RequirePermission(Permissions.PRODUCT_READ)
   getProductAttributes(
     @Param('id', ParseUUIDPipe) productId: string,
   ) {
@@ -107,10 +107,8 @@ export class ProductController {
   }
 
   @Patch(':id/variants/:variantId')
-  @ApiOperation({
-    summary:
-      'Urun varyantini guncelle (isActive store bazli yonetilir: token storeId varsa sadece o store, yoksa tum storelar)',
-  })
+  @ApiOperation({ summary: 'Urun varyantini guncelle' })
+  @RequirePermission(Permissions.PRODUCT_VARIANT_MANAGE)
   updateVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,
@@ -120,10 +118,8 @@ export class ProductController {
   }
 
   @Delete(':id/variants/:variantId')
-  @ApiOperation({
-    summary:
-      'Urun varyantini pasife al (token storeId varsa sadece o store, yoksa tum storelar)',
-  })
+  @ApiOperation({ summary: 'Urun varyantini pasife al' })
+  @RequirePermission(Permissions.PRODUCT_DELETE)
   removeVariant(
     @Param('id', ParseUUIDPipe) productId: string,
     @Param('variantId', ParseUUIDPipe) variantId: string,

@@ -9,6 +9,8 @@ import { DataSource, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
 import { createHash, randomBytes } from 'crypto';
 import * as bcrypt from 'bcrypt';
+import { PermissionService } from 'src/permission/permission.service';
+import { UserRole } from 'src/user/user.entity';
 
 export interface OAuthUserPayload {
   email: string;
@@ -37,6 +39,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly mailService: MailService,
     private readonly configService: ConfigService,
+    private readonly permissionService: PermissionService,
     @InjectRepository(PasswordResetToken)
     private readonly tokenRepo: Repository<PasswordResetToken>,
     @InjectRepository(RefreshToken)
@@ -86,9 +89,10 @@ export class AuthService {
       user.tenant.id,
     );
     const payload = this.buildLoginPayload(user, storeId, storeType);
-    const [access_token, refresh_token] = await Promise.all([
+    const [access_token, refresh_token, permissionSet] = await Promise.all([
       this.jwtService.signAsync(payload),
       this.issueRefreshToken(user.id, user.tenant.id),
+      this.permissionService.getRolePermissions(user.tenant.id, user.role as UserRole),
     ]);
 
     return {
@@ -103,6 +107,7 @@ export class AuthService {
         storeId,
         storeType,
         role: user.role,
+        permissions: [...permissionSet],
       },
     };
   }
@@ -124,9 +129,10 @@ export class AuthService {
       user.tenant.id,
     );
     const payload = this.buildLoginPayload(user, storeId, storeType);
-    const [access_token, refresh_token] = await Promise.all([
+    const [access_token, refresh_token, permissionSet] = await Promise.all([
       this.jwtService.signAsync(payload),
       this.issueRefreshToken(user.id, user.tenant.id),
+      this.permissionService.getRolePermissions(user.tenant.id, user.role as UserRole),
     ]);
 
     return {
@@ -141,6 +147,7 @@ export class AuthService {
         storeId,
         storeType,
         role: user.role,
+        permissions: [...permissionSet],
       },
     };
   }
