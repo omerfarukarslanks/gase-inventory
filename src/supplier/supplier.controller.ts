@@ -33,7 +33,7 @@ export class SupplierController {
 
   @Post()
   @ApiOperation({ summary: 'Yeni tedarikçi oluştur' })
-  @RequirePermission(Permissions.SUPPLIER_MANAGE)
+  @RequirePermission(Permissions.SUPPLIER_CREATE)
   create(@Body() dto: CreateSupplierDto) {
     return this.supplierService.create(dto);
   }
@@ -54,7 +54,7 @@ export class SupplierController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Tedarikçiyi güncelle' })
-  @RequirePermission(Permissions.SUPPLIER_MANAGE)
+  @RequirePermission(Permissions.SUPPLIER_UPDATE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateSupplierDto,
@@ -65,7 +65,7 @@ export class SupplierController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Tedarikçiyi pasife al (soft delete)' })
-  @RequirePermission(Permissions.SUPPLIER_MANAGE)
+  @RequirePermission(Permissions.SUPPLIER_UPDATE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.supplierService.remove(id);
   }

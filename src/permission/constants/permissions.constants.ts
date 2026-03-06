@@ -70,7 +70,8 @@ export const Permissions = {
 
   // ─── Tedarikçi ──────────────────────────────────────
   SUPPLIER_READ:   'SUPPLIER_READ',
-  SUPPLIER_MANAGE: 'SUPPLIER_MANAGE',
+  SUPPLIER_CREATE: 'SUPPLIER_CREATE',
+  SUPPLIER_UPDATE: 'SUPPLIER_UPDATE',
 
   // ─── Müşteri ────────────────────────────────────────
   CUSTOMER_READ:   'CUSTOMER_READ',
@@ -157,7 +158,8 @@ export const PERMISSION_META: Record<
   USER_STORE_ASSIGN: { group: 'Kullanıcı', description: 'Kullanıcıya mağaza atama / çıkarma' },
 
   SUPPLIER_READ:   { group: 'Tedarikçi', description: 'Tedarikçi listeleme ve görüntüleme' },
-  SUPPLIER_MANAGE: { group: 'Tedarikçi', description: 'Tedarikçi oluşturma/güncelleme/silme' },
+  SUPPLIER_CREATE: { group: 'Tedarikçi', description: 'Tedarikçi oluşturma' },
+  SUPPLIER_UPDATE: { group: 'Tedarikçi', description: 'Tedarikçi güncelleme' },
 
   CUSTOMER_READ:   { group: 'Müşteri', description: 'Müşteri listeleme, görüntüleme ve bakiye' },
   CUSTOMER_CREATE: { group: 'Müşteri', description: 'Müşteri oluşturma' },
@@ -248,7 +250,6 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.STORE_CREATE,
     Permissions.STORE_UPDATE,
     Permissions.SUPPLIER_READ,
-    Permissions.SUPPLIER_MANAGE,
     Permissions.CUSTOMER_READ,
     Permissions.USER_READ,
     Permissions.USER_CREATE,
