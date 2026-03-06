@@ -79,7 +79,7 @@ export class AuthController {
   @ApiBearerAuth('access-token')
   @ApiOperation({ summary: 'Oturum açmış kullanıcının bilgilerini döner' })
   async getMe(@Req() req: Request & { user: any }) {
-    const user = await this.usersService.getUserDetails(req.user.sub);
+    const user = await this.usersService.getUserDetails(req.user.id);
     return user;
   }
 
