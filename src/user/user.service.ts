@@ -69,7 +69,6 @@ export class UsersService {
       // 🔹 Transaction içindeki repo'lar
       const userRepo = manager.getRepository(User);
       const userStoreRepo = manager.getRepository(UserStore);
-      console.log(input)
       // 1) Tenant oluştur
       const tenant = await this.tenantsService.create(
         input.tenantName,
@@ -461,7 +460,7 @@ export class UsersService {
     await this.userStoreRepo.remove(us);
   }
 
-  async getUserDetails(userId: string): Promise<User> {
+  async getUserDetails(userId: string) {
     const tenantId = this.appContext.getTenantIdOrThrow();
 
     const user = await this.userRepo.findOne({
@@ -473,7 +472,42 @@ export class UsersService {
       throw new NotFoundException(UserErrors.USER_NOT_FOUND);
     }
 
-    return user;
+    const permissionSet = await this.permissionService.getRolePermissions(tenantId, user.role as UserRole);
+
+    return {
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      surname: user.surname,
+      phone: user.phone ?? null,
+      address: user.address ?? null,
+      avatar: user.avatar ?? null,
+      birthDate: user.birthDate ?? null,
+      role: user.role,
+      isActive: user.isActive,
+      authProvider: user.authProvider,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+      tenant: {
+        id: user.tenant.id,
+        name: user.tenant.name,
+        slug: user.tenant.slug,
+        logo: user.tenant.logo ?? null,
+        description: user.tenant.description ?? null,
+        isActive: user.tenant.isActive,
+      },
+      stores: user.userStores.map((us) => ({
+        id: us.store.id,
+        name: us.store.name,
+        code: us.store.code,
+        slug: us.store.slug,
+        storeType: us.store.storeType,
+        currency: us.store.currency,
+        isActive: us.store.isActive,
+        role: us.role,
+      })),
+      permissions: [...permissionSet],
+    };
   }
 
   // Tenant içindeki tüm kullanıcıları listele

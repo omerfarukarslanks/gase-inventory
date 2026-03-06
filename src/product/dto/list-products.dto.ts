@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsIn, IsNumber, IsOptional, IsString, MaxLength } from 'class-validator';
 import { PaginationQueryDto, SortOrder } from 'src/common/dto/pagination.dto';
 import { PaginatedResponseDto } from 'src/common/dto/paginated-response.dto';
 import { Product } from '../product.entity';
@@ -31,6 +31,7 @@ export class ListProductsDto extends PaginationQueryDto {
     example: 'TRY',
   })
   @IsString()
+  @MaxLength(10)
   @IsOptional()
   defaultCurrency?: string;
 

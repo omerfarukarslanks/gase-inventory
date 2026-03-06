@@ -5,9 +5,10 @@ import { UsersService } from 'src/user/user.service';
 import { MailService } from 'src/mail/mail.service';
 import { PasswordResetToken } from './password-reset-token';
 import { RefreshToken } from './refresh-token.entity';
-import { DataSource, Repository } from 'typeorm';
+import { RevokedAccessToken } from './revoked-access-token.entity';
+import { DataSource, LessThan, Repository } from 'typeorm';
 import { InjectRepository } from '@nestjs/typeorm';
-import { createHash, randomBytes } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import * as bcrypt from 'bcrypt';
 import { PermissionService } from 'src/permission/permission.service';
 import { UserRole } from 'src/user/user.entity';
@@ -21,10 +22,10 @@ export interface OAuthUserPayload {
   authProviderId: string;
 }
 
-// Saniye cinsinden parse: '30d' → 2592000, '1h' → 3600
+// Saniye cinsinden parse: '7d' → 604800000, '1h' → 3600000
 function parseDurationToMs(value: string): number {
   const match = value.match(/^(\d+)([smhd])$/);
-  if (!match) return 30 * 24 * 60 * 60 * 1000; // 30 gün default
+  if (!match) return 7 * 24 * 60 * 60 * 1000; // 7 gün default
   const n = parseInt(match[1], 10);
   const unit: Record<string, number> = { s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 };
   return n * unit[match[2]];
@@ -44,10 +45,12 @@ export class AuthService {
     private readonly tokenRepo: Repository<PasswordResetToken>,
     @InjectRepository(RefreshToken)
     private readonly refreshTokenRepo: Repository<RefreshToken>,
+    @InjectRepository(RevokedAccessToken)
+    private readonly revokedRepo: Repository<RevokedAccessToken>,
     private readonly dataSource: DataSource,
   ) {
     this.refreshTokenTtlMs = parseDurationToMs(
-      this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') ?? '30d',
+      this.configService.get<string>('REFRESH_TOKEN_EXPIRES_IN') ?? '7d',
     );
   }
 
@@ -69,12 +72,44 @@ export class AuthService {
 
   private buildLoginPayload(user: any, storeId: string | null, storeType: string | null) {
     return {
+      jti: randomUUID(), // her token için benzersiz ID → revoke için kullanılır
       sub: user.id,
       tenantId: user.tenant.id,
       role: user.role,
       storeId,
       storeType,
     };
+  }
+
+  /** Access token'ı geçersiz kıl (logout'ta kullanılır) */
+  async revokeAccessToken(rawBearerToken: string): Promise<void> {
+    try {
+      // Signature doğrulaması olmadan sadece payload'ı oku
+      const decoded = this.jwtService.decode(rawBearerToken) as {
+        jti?: string;
+        exp?: number;
+      } | null;
+
+      if (!decoded?.jti || !decoded?.exp) return;
+
+      const expiresAt = new Date(decoded.exp * 1000);
+      // Süresi çoktan geçmişse kaydetmeye gerek yok
+      if (expiresAt <= new Date()) return;
+
+      await this.revokedRepo.upsert({ jti: decoded.jti, expiresAt }, ['jti']);
+    } catch {
+      // Token parse hatası → görmezden gel
+    }
+  }
+
+  /** JTI'ın revoke listesinde olup olmadığını kontrol eder (JwtStrategy kullanır) */
+  async isAccessTokenRevoked(jti: string): Promise<boolean> {
+    return this.revokedRepo.existsBy({ jti });
+  }
+
+  /** Süresi geçmiş revoked token kayıtlarını temizle */
+  async cleanupExpiredRevokedTokens(): Promise<void> {
+    await this.revokedRepo.delete({ expiresAt: LessThan(new Date()) });
   }
 
   async login(email: string, password: string) {
@@ -116,7 +151,6 @@ export class AuthService {
     let user = await this.usersService.findByEmail(oauthUser.email);
 
     if (!user) {
-      // İlk kez giriş yapıyor → yeni tenant + user oluştur
       user = await this.usersService.createTenantWithOwnerOAuth(oauthUser);
     }
 
@@ -189,13 +223,23 @@ export class AuthService {
     return { access_token, refresh_token };
   }
 
-  async logout(rawToken: string): Promise<void> {
-    const tokenHash = this.hashToken(rawToken);
+  async logout(rawRefreshToken: string, authorizationHeader?: string): Promise<void> {
+    // 1) Refresh token'ı revoke et
+    const tokenHash = this.hashToken(rawRefreshToken);
     const record = await this.refreshTokenRepo.findOne({ where: { tokenHash } });
     if (record && !record.revokedAt) {
       record.revokedAt = new Date();
       await this.refreshTokenRepo.save(record);
     }
+
+    // 2) Access token varsa revoke et
+    if (authorizationHeader?.startsWith('Bearer ')) {
+      const accessToken = authorizationHeader.slice(7);
+      await this.revokeAccessToken(accessToken);
+    }
+
+    // 3) Süresi geçmiş revoked token'ları lazy cleanup
+    await this.cleanupExpiredRevokedTokens();
   }
 
   async requestReset(email: string) {
@@ -203,35 +247,28 @@ export class AuthService {
     const user = await this.usersService.findByEmail(email);
     if (!user) return;
 
-    const token = randomBytes(32).toString('hex'); // linkte gidecek
+    const token = randomBytes(32).toString('hex');
     const tokenHash = this.hashToken(token);
-
     const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 dk
 
     await this.dataSource.transaction(async (manager) => {
       const tokenRepo = manager.getRepository(PasswordResetToken);
       await tokenRepo.insert({
         userId: user.id,
-        tenantId: (user as any).tenantId, // varsa
+        tenantId: (user as any).tenantId,
         tokenHash,
         expiresAt,
       });
-
+    });
 
     // Mail gönderimi transaction dışında: başarısız olsa bile token kaybolmaz
     const resetUrl = `${process.env.APP_WEB_URL}/reset-password?token=${encodeURIComponent(token)}`;
     await this.mailService.sendPasswordResetEmail(user.email, resetUrl);
-    });
-
   }
 
   async resetPassword(token: string, newPassword: string) {
-
     const tokenHash = this.hashToken(token);
-
-    const record = await this.tokenRepo.findOne({
-      where: { tokenHash },
-    });
+    const record = await this.tokenRepo.findOne({ where: { tokenHash } });
 
     if (!record) {
       throw new BadRequestException('Geçersiz token');
@@ -244,11 +281,8 @@ export class AuthService {
     }
 
     const passwordHash = await bcrypt.hash(newPassword, 10);
-
-    // user password update
     await this.usersService.updatePassword(record.userId, passwordHash);
 
-    // token invalidate
     record.usedAt = new Date();
     await this.tokenRepo.save(record);
   }

@@ -3,9 +3,11 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { UsersService } from 'src/user/user.service';
+import { AuthService } from './auth.service';
 import { StoreType } from 'src/common/constants/store-type.constants';
 
 export interface JwtPayload {
+  jti?: string;
   sub: string;
   tenantId: string;
   role: string;
@@ -18,6 +20,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     config: ConfigService,
     private readonly usersService: UsersService,
+    private readonly authService: AuthService,
   ) {
     const secret = config.get<string>('JWT_SECRET');
     if (!secret) {
@@ -32,6 +35,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: JwtPayload) {
+    if (payload.jti && (await this.authService.isAccessTokenRevoked(payload.jti))) {
+      throw new UnauthorizedException('Token iptal edilmiş');
+    }
+
     const user = await this.usersService.findById(payload.sub);
 
     if (!user || !user.isActive) {

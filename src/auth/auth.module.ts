@@ -8,9 +8,11 @@ import { LocalStrategy } from './local.strategy';
 import { JwtStrategy } from './jwt.strategy';
 import { AuthController } from './auth.controller';
 import { LoginRateLimitGuard } from './login-rate-limit.guard';
+import { RateLimitGuard } from './rate-limit.guard';
 import { MailModule } from 'src/mail/mail.module';
 import { PasswordResetToken } from './password-reset-token';
 import { RefreshToken } from './refresh-token.entity';
+import { RevokedAccessToken } from './revoked-access-token.entity';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { MicrosoftStrategy } from './strategies/microsoft.strategy';
@@ -21,7 +23,7 @@ import { MicrosoftStrategy } from './strategies/microsoft.strategy';
     ConfigModule,
     PassportModule,
     MailModule,
-    TypeOrmModule.forFeature([PasswordResetToken, RefreshToken]),
+    TypeOrmModule.forFeature([PasswordResetToken, RefreshToken, RevokedAccessToken]),
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -31,7 +33,7 @@ import { MicrosoftStrategy } from './strategies/microsoft.strategy';
       }),
     }),
   ],
-  providers: [AuthService, LocalStrategy, JwtStrategy, GoogleStrategy, MicrosoftStrategy, LoginRateLimitGuard],
+  providers: [AuthService, LocalStrategy, JwtStrategy, GoogleStrategy, MicrosoftStrategy, LoginRateLimitGuard, RateLimitGuard],
   controllers: [AuthController],
 })
 export class AuthModule {}

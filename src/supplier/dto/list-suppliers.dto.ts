@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, IsOptional, IsString, Max, Min } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
 import { SortOrder } from 'src/common/dto/pagination.dto';
 import { PaginatedResponseDto } from 'src/common/dto/paginated-response.dto';
 import { Supplier } from '../supplier.entity';
@@ -42,6 +42,7 @@ export class ListSuppliersQueryDto {
 
   @ApiPropertyOptional({ description: 'Arama sorgusu (ad, soyad, telefon, e-posta)', type: String })
   @IsString()
+  @MaxLength(200)
   @IsOptional()
   search?: string;
 

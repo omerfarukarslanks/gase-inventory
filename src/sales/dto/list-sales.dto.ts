@@ -10,6 +10,7 @@ import {
   IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { PaymentStatus, Sale, SaleStatus } from '../sale.entity';
@@ -72,16 +73,19 @@ export class ListSalesForStoreQueryDto {
   @ApiPropertyOptional({ description: 'Fiş numarasına göre filtre', example: 'SF-20260218' })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   receiptNo?: string;
 
   @ApiPropertyOptional({ description: 'Müşteri adı filtresi', example: 'Ahmet' })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   name?: string;
 
   @ApiPropertyOptional({ description: 'Müşteri soyadı filtresi', example: 'Yılmaz' })
   @IsOptional()
   @IsString()
+  @MaxLength(200)
   surname?: string;
 
   @ApiPropertyOptional({

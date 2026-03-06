@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsEmail, IsEmpty, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import { IsEmail, IsEmpty, IsNotEmpty, IsOptional, IsString, Matches, MinLength } from 'class-validator';
 
 export class SignupTenantDto {
   @ApiProperty({ example: 'Acme Corporation' })
@@ -17,10 +17,13 @@ export class SignupTenantDto {
   @IsNotEmpty()
   email: string;
 
-  @ApiProperty({ example: 'strongpassword123' })
+  @ApiProperty({ example: 'Str0ng!Pass' })
   @IsString()
   @IsNotEmpty()
-  @MinLength(6)
+  @MinLength(8)
+  @Matches(/^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).+$/, {
+    message: 'Şifre en az 8 karakter, bir büyük harf, bir küçük harf ve bir rakam içermelidir.',
+  })
   password: string;
 
   @ApiProperty({ example: 'John' })

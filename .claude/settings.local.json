@@ -21,7 +21,18 @@
       "Bash(/usr/local/bin/npx tsc:*)",
       "Bash(ls:*)",
       "Bash(/Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/npx tsc --noEmit)",
-      "Bash(arch -arm64 /Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/node /Users/omerfarukarslan/Desktop/projects/gase-inventory/node_modules/.bin/tsc:*)"
+      "Bash(arch -arm64 /Users/omerfarukarslan/.nvm/versions/node/v22.12.0/bin/node /Users/omerfarukarslan/Desktop/projects/gase-inventory/node_modules/.bin/tsc:*)",
+      "Bash(grep -n \"@Public\\(\\)\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/**/*.ts)",
+      "Bash(grep -n \"MinLength\\\\|maxLength\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/auth/dto/*.ts)",
+      "Bash(grep -n \"IsEmail\\\\|@Email\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/auth/dto/*.ts)",
+      "Bash(grep -n \"Matches\\\\|@Match\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/auth/dto/*.ts)",
+      "Bash(npm audit --audit-level=moderate /Users/omerfarukarslan/Desktop/projects/gase-inventory)",
+      "Bash(node -e \"const fs = require\\(''fs''\\); const pkg = JSON.parse\\(fs.readFileSync\\(''package.json'', ''utf8''\\)\\); console.log\\(Object.keys\\(pkg.dependencies\\).sort\\(\\).join\\(''\\\\n''\\)\\)\")",
+      "Bash(git check-ignore .env)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/npx tsc --noEmit)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node ~/.nvm/versions/node/v22.12.0/bin/npx tsc --noEmit)",
+      "Bash(export PATH=\"$HOME/.nvm/versions/node/v22.12.0/bin:$PATH\")",
+      "Bash(node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''inherit'', cwd: ''/Users/omerfarukarslan/Desktop/projects/gase-inventory''}\\)\")"
     ]
   }
 }
