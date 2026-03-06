@@ -31,35 +31,35 @@ export class ProductCategoryController {
 
   @Post()
   @ApiOperation({ summary: 'Yeni kategori oluştur' })
-  @RequirePermission(Permissions.PRODUCT_CATEGORY_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_CREATE)
   create(@Body() dto: CreateProductCategoryDto) {
     return this.categoryService.create(dto);
   }
 
   @Get()
   @ApiOperation({ summary: 'Kategorileri listele' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_READ)
   findAll(@Query() query: ListProductCategoriesQueryDto) {
     return this.categoryService.findAll(query);
   }
 
   @Get('tree')
   @ApiOperation({ summary: 'Kategorileri ağaç yapısıyla getir (children iç içe)' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_READ)
   findTree() {
     return this.categoryService.findTree();
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Tek kategori getir' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_READ)
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.categoryService.findOneOrThrow(id);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Kategori güncelle' })
-  @RequirePermission(Permissions.PRODUCT_CATEGORY_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_UPDATE)
   update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdateProductCategoryDto,
@@ -69,7 +69,7 @@ export class ProductCategoryController {
 
   @Delete(':id')
   @ApiOperation({ summary: 'Kategori pasife al' })
-  @RequirePermission(Permissions.PRODUCT_CATEGORY_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_CATEGORY_UPDATE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.categoryService.remove(id);
   }

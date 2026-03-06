@@ -78,14 +78,14 @@ export class SalesController {
 
   @Get(':id/payments')
   @ApiOperation({ summary: 'Satış fişinin ödeme kayıtlarını listele' })
-  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
+  @RequirePermission(Permissions.SALE_PAYMENT_READ)
   listPayments(@Param('id', ParseUUIDPipe) id: string) {
     return this.salesService.listPayments(id);
   }
 
   @Post(':id/payments')
   @ApiOperation({ summary: 'Satış fişine ödeme kaydı ekle' })
-  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
+  @RequirePermission(Permissions.SALE_PAYMENT_CREATE)
   addPayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: AddPaymentDto,
@@ -95,7 +95,7 @@ export class SalesController {
 
   @Patch(':id/payments/:paymentId')
   @ApiOperation({ summary: 'Ödeme kaydını güncelle' })
-  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
+  @RequirePermission(Permissions.SALE_PAYMENT_UPDATE)
   updatePayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('paymentId', ParseUUIDPipe) paymentId: string,
@@ -107,7 +107,7 @@ export class SalesController {
   @Delete(':id/payments/:paymentId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Ödeme kaydını iptal et (soft-cancel)' })
-  @RequirePermission(Permissions.SALE_PAYMENT_MANAGE)
+  @RequirePermission(Permissions.SALE_PAYMENT_UPDATE)
   deletePayment(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('paymentId', ParseUUIDPipe) paymentId: string,
@@ -119,7 +119,7 @@ export class SalesController {
 
   @Post(':id/lines')
   @ApiOperation({ summary: 'Mevcut satış fişine yeni satır ekle ve stok düş' })
-  @RequirePermission(Permissions.SALE_LINE_MANAGE)
+  @RequirePermission(Permissions.SALE_LINE_CREATE)
   addSaleLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateSaleLineDto,
@@ -129,7 +129,7 @@ export class SalesController {
 
   @Patch(':id/lines/:lineId')
   @ApiOperation({ summary: 'Satış satırını güncelle — quantity değişirse stok farkı ayarlanır' })
-  @RequirePermission(Permissions.SALE_LINE_MANAGE)
+  @RequirePermission(Permissions.SALE_LINE_UPDATE)
   updateSaleLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('lineId', ParseUUIDPipe) lineId: string,
@@ -141,7 +141,7 @@ export class SalesController {
   @Delete(':id/lines/:lineId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Satış satırını sil — stok iade edilir' })
-  @RequirePermission(Permissions.SALE_LINE_MANAGE)
+  @RequirePermission(Permissions.SALE_LINE_UPDATE)
   removeSaleLine(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('lineId', ParseUUIDPipe) lineId: string,
@@ -153,7 +153,7 @@ export class SalesController {
 
   @Post(':id/returns')
   @ApiOperation({ summary: 'Satıştan kısmi iade oluştur — seçili satırları iade eder, stoklar geri yüklenir' })
-  @RequirePermission(Permissions.SALE_RETURN)
+  @RequirePermission(Permissions.SALE_RETURN_CREATE)
   createReturn(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: CreateSaleReturnDto,
@@ -163,7 +163,7 @@ export class SalesController {
 
   @Get(':id/returns')
   @ApiOperation({ summary: 'Satışa ait tüm iade kayıtlarını listele' })
-  @RequirePermission(Permissions.SALE_READ)
+  @RequirePermission(Permissions.SALE_RETURN_READ)
   listReturns(@Param('id', ParseUUIDPipe) id: string) {
     return this.salesService.listSaleReturns(id);
   }

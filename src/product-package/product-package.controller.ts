@@ -32,14 +32,14 @@ export class ProductPackageController {
 
   @Post()
   @ApiOperation({ summary: 'Yeni paket tanımı oluştur' })
-  @RequirePermission(Permissions.PRODUCT_PACKAGE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_PACKAGE_CREATE)
   async create(@Body() dto: CreatePackageDto) {
     return PackageResponse.fromEntity(await this.packageService.create(dto));
   }
 
   @Get()
   @ApiOperation({ summary: 'Tenant\'a ait tüm paketleri listele' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_PACKAGE_READ)
   async findAll(@Query() query: ListPackagesDto) {
     const result = await this.packageService.findAll(query);
     return { ...result, data: result.data.map(PackageResponse.fromEntity) };
@@ -47,7 +47,7 @@ export class ProductPackageController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Paket detayını getir' })
-  @RequirePermission(Permissions.PRODUCT_READ)
+  @RequirePermission(Permissions.PRODUCT_PACKAGE_READ)
   async findOne(@Param('id', ParseUUIDPipe) id: string) {
     return PackageResponse.fromEntity(await this.packageService.findOneOrThrow(id));
   }
@@ -64,7 +64,7 @@ export class ProductPackageController {
 
   @Patch(':id')
   @ApiOperation({ summary: 'Paket bilgilerini güncelle' })
-  @RequirePermission(Permissions.PRODUCT_PACKAGE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_PACKAGE_UPDATE)
   async update(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() dto: UpdatePackageDto,
@@ -75,7 +75,7 @@ export class ProductPackageController {
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Paketi pasife çek (soft-delete)' })
-  @RequirePermission(Permissions.PRODUCT_PACKAGE_MANAGE)
+  @RequirePermission(Permissions.PRODUCT_PACKAGE_UPDATE)
   remove(@Param('id', ParseUUIDPipe) id: string) {
     return this.packageService.remove(id);
   }
