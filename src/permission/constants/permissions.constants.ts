@@ -60,6 +60,7 @@ export const Permissions = {
   STORE_CREATE: 'STORE_CREATE',
   STORE_UPDATE: 'STORE_UPDATE',
   STORE_DELETE: 'STORE_DELETE',
+  STORE_VIEW: 'STORE_VIEW',
 
   // ─── Kullanıcı ──────────────────────────────────────
   USER_READ:         'USER_READ',
@@ -146,7 +147,8 @@ export const PERMISSION_META: Record<
   PRICE_READ:   { group: 'Fiyat', description: 'Mağaza fiyatlarını görüntüleme' },
   PRICE_MANAGE: { group: 'Fiyat', description: 'Mağaza bazlı fiyat/vergi/indirim tanımlama' },
 
-  STORE_READ:   { group: 'Mağaza', description: 'Mağaza bilgilerini görüntüleme' },
+  STORE_READ:   { group: 'Mağaza', description: 'Mağaza bilgilerini listeleme' },
+  STORE_VIEW:   { group: 'Mağaza', description: 'Mağaza bilgilerini görüntüleme' },
   STORE_CREATE: { group: 'Mağaza', description: 'Yeni mağaza oluşturma' },
   STORE_UPDATE: { group: 'Mağaza', description: 'Mağaza bilgilerini güncelleme' },
   STORE_DELETE: { group: 'Mağaza', description: 'Mağazayı pasife alma (soft delete)' },
