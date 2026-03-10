@@ -80,10 +80,11 @@ export class InventoryMovement extends AuditableEntity {
   @Column({ nullable: true })
   campaignCode?: string; // kampanya kodu / ismi
 
-  @Column({ nullable: true })
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
   saleId?: string;
 
-  @Column({ nullable: true })
+  @Column({ type: 'uuid', nullable: true })
   saleLineId?: string;
 
   /**
@@ -92,4 +93,26 @@ export class InventoryMovement extends AuditableEntity {
    */
   @Column({ type: 'uuid', nullable: true })
   supplierId?: string;
+
+  // ---------- Lot / lokasyon / seri (Faz 1 NULL, Faz 2 dolar) ----------
+
+  /** Lot / parti numarası */
+  @Column({ length: 100, nullable: true })
+  lotNumber?: string;
+
+  /** Son kullanma tarihi */
+  @Column({ type: 'date', nullable: true })
+  expiryDate?: Date;
+
+  /**
+   * Lokasyon ID (Faz 2'de locations tablosuna FK olacak).
+   * Sade UUID kolonu — cross-module bağımlılığı önlemek için.
+   */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  locationId?: string;
+
+  /** Seri numarası */
+  @Column({ length: 200, nullable: true })
+  serialNumber?: string;
 }

@@ -18,7 +18,7 @@ export enum StoreUserRole {
 @Unique(['user', 'store'])
 export class UserStore extends AuditableEntity {
 
-  @ManyToOne(() => User, (user) => user.userStores, { eager: true })
+  @ManyToOne(() => User, (user) => user.userStores, { eager: false })
   user: User;
 
   @ManyToOne(() => Store, (store) => store.userStores, { eager: true })

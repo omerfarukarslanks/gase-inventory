@@ -17,6 +17,8 @@ lerna-debug.log*
 .claude/*
 .claude/
 
+*.md
+
 # OS
 .DS_Store
 
