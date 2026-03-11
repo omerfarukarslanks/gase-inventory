@@ -9,6 +9,7 @@ import { StoreVariantStock } from './store-variant-stock.entity';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
 import { StockBalance } from './stock-balance.entity';
+import { SerialNumber } from './serial-number.entity';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { StockBalance } from './stock-balance.entity';
       StoreProductPrice,
       Supplier,
       StockBalance,
+      SerialNumber,
     ]),
   ],
   providers: [InventoryService],

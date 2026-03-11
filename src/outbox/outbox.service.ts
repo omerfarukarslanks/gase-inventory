@@ -109,20 +109,23 @@ export class OutboxService {
     return qb.getMany();
   }
 
-  /** Dead-letter event'i manuel olarak yeniden PENDING'e alır */
+  /**
+   * Dead-letter event'i manuel olarak yeniden PENDING'e alır.
+   * status + retryCount + nextRetryAt tek atomik UPDATE'te değiştirilerek
+   * fetchPending() ile olası race condition önlenir.
+   */
   async requeueDeadLetter(eventId: string): Promise<void> {
-    await this.repo.update(eventId, {
-      status: OutboxEventStatus.PENDING,
-      nextRetryAt: new Date(),
-      lastError: undefined,
-    });
-
-    // retryCount'u sıfırla ki yeniden tam deneme hakkı verilsin
     await this.repo
       .createQueryBuilder()
       .update(OutboxEvent)
-      .set({ retryCount: 0 })
+      .set({
+        status: OutboxEventStatus.PENDING,
+        retryCount: 0,
+        nextRetryAt: new Date(),
+        lastError: undefined,
+      })
       .where('id = :id', { id: eventId })
+      .andWhere('status = :status', { status: OutboxEventStatus.DEAD_LETTER })
       .execute();
   }
 }

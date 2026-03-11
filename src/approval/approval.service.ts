@@ -24,10 +24,13 @@ import {
   StockAdjustmentRequestData,
 } from './dto/approval.dto';
 
-/** Kaç onay seviyesi gerekiyor? */
+/** Kaç onay seviyesi gerekiyor? 1 = L1 yeterli, 2 = L1 + L2 zorunlu */
 const MAX_LEVEL: Record<ApprovalEntityType, 1 | 2> = {
   [ApprovalEntityType.STOCK_ADJUSTMENT]: 1,
   [ApprovalEntityType.PRICE_OVERRIDE]:   2,
+  [ApprovalEntityType.PURCHASE_ORDER]:   1,
+  [ApprovalEntityType.SALE_RETURN]:      1,
+  [ApprovalEntityType.COUNT_ADJUSTMENT]: 1,
 };
 
 @Injectable()
@@ -195,6 +198,19 @@ export class ApprovalService {
         break;
       case ApprovalEntityType.PRICE_OVERRIDE:
         await this.executePriceOverride(approval);
+        break;
+      case ApprovalEntityType.PURCHASE_ORDER:
+        // PO onayı: ProcurementService.approvePurchaseOrder() çağrılmalı.
+        // Circular dependency nedeniyle buraya inject edilmedi; eventId requestData'da saklanıyor.
+        // TODO: OutboxService'e PURCHASE_ORDER_APPROVED event yaz → ProcurementModule işlesin.
+        break;
+      case ApprovalEntityType.SALE_RETURN:
+        // İade onayı: SaleReturnService.executeReturn() çağrılmalı.
+        // TODO: OutboxService'e SALE_RETURN_APPROVED event yaz → SalesModule işlesin.
+        break;
+      case ApprovalEntityType.COUNT_ADJUSTMENT:
+        // Stok sayım farkı: her satır için inventory.adjustStock() çağrılmalı.
+        // TODO: requestData.lines üzerinde dönerek adjustStock çağır.
         break;
     }
 

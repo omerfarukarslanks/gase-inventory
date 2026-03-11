@@ -35,6 +35,54 @@ export class ActionAiService {
   private tenantId() { return this.appContext.getTenantIdOrThrow(); }
   private userId()   { return this.appContext.getUserIdOrThrow(); }
 
+  /**
+   * Genel PENDING kontrol: belirli bir actionType + JSONB alanı kombinasyonu zaten var mı?
+   * Demand forecast ve anomaly için storeId bazlı tekrar oluşturmayı önler.
+   */
+  private async pendingExists_generic(
+    tenantId: string,
+    actionType: AiActionType,
+    jsonbKey: string,
+    jsonbValue: string,
+  ): Promise<boolean> {
+    const count = await this.repo
+      .createQueryBuilder('s')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.actionType = :type', { type: actionType })
+      .andWhere('s.status = :status', { status: AiActionStatus.PENDING })
+      .andWhere(`s.suggestedData->>'${jsonbKey}' = :val`, { val: jsonbValue })
+      .getCount();
+    return count > 0;
+  }
+
+  /** PRICE_ADJUSTMENT: suggestedData->>'productVariantId' eşleşmesi */
+  private async pendingExists_price(tenantId: string, variantId: string): Promise<boolean> {
+    const count = await this.repo
+      .createQueryBuilder('s')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.actionType = :type', { type: AiActionType.PRICE_ADJUSTMENT })
+      .andWhere('s.status = :status', { status: AiActionStatus.PENDING })
+      .andWhere("s.suggestedData->>'productVariantId' = :variantId", { variantId })
+      .getCount();
+    return count > 0;
+  }
+
+  /** CREATE_PO_DRAFT: lines dizisinde productVariantId içeren kayıt var mı? */
+  private async pendingExists_po(tenantId: string, storeId: string, variantId: string): Promise<boolean> {
+    const count = await this.repo
+      .createQueryBuilder('s')
+      .where('s.tenantId = :tenantId', { tenantId })
+      .andWhere('s.actionType = :type', { type: AiActionType.CREATE_PO_DRAFT })
+      .andWhere('s.status = :status', { status: AiActionStatus.PENDING })
+      .andWhere("s.suggestedData->>'storeId' = :storeId", { storeId })
+      .andWhere(
+        `s.suggestedData->'lines' @> :lineFragment::jsonb`,
+        { lineFragment: JSON.stringify([{ productVariantId: variantId }]) },
+      )
+      .getCount();
+    return count > 0;
+  }
+
   private async findOrThrow(id: string): Promise<AiActionSuggestion> {
     const s = await this.repo.findOne({ where: { id, tenantId: this.tenantId() } });
     if (!s) throw new NotFoundException(`AI öneri bulunamadı: ${id}`);
@@ -90,26 +138,10 @@ export class ActionAiService {
         const storeId = row.storeId ?? dto.storeId;
         if (!storeId || !row.productVariantId) continue;
 
-        // Zaten bekleyen öneri var mı?
-        const existingCount = await this.repo.count({
-          where: {
-            tenantId,
-            actionType: AiActionType.CREATE_PO_DRAFT,
-            status: AiActionStatus.PENDING,
-          },
-        });
-        // Aşırı öneri üretimini önle — aynı varyant için tek öneri
-        const alreadyExists = await this.repo.findOne({
-          where: {
-            tenantId,
-            actionType: AiActionType.CREATE_PO_DRAFT,
-            status: AiActionStatus.PENDING,
-          },
-        });
-        if (alreadyExists && JSON.stringify(alreadyExists.suggestedData).includes(row.productVariantId)) {
+        // Aynı mağaza + varyant için zaten bekleyen öneri var mı?
+        if (await this.pendingExists_po(tenantId, storeId, row.productVariantId)) {
           continue;
         }
-        void existingCount; // suppress unused warning
 
         const currentQty = Number(row.quantity ?? 0);
         const suggestedQty = Math.max(
@@ -149,14 +181,7 @@ export class ActionAiService {
         const storeId = row.storeId ?? dto.storeId;
         if (!storeId || !row.productVariantId || !row.price) continue;
 
-        const alreadyExists = await this.repo.findOne({
-          where: {
-            tenantId,
-            actionType: AiActionType.PRICE_ADJUSTMENT,
-            status: AiActionStatus.PENDING,
-          },
-        });
-        if (alreadyExists && JSON.stringify(alreadyExists.suggestedData).includes(row.productVariantId)) {
+        if (await this.pendingExists_price(tenantId, row.productVariantId)) {
           continue;
         }
 
@@ -183,6 +208,178 @@ export class ActionAiService {
       }
     }
 
+    // ── 3. Talep tahmini → DEMAND_FORECAST ───────────────────────────────────
+    const demandSuggestions = await this.analyzeDemandForecast(tenantId, dto.storeId);
+    created.push(...demandSuggestions);
+
+    // ── 4. Anomali tespiti → ANOMALY_ALERT ────────────────────────────────────
+    const anomalySuggestions = await this.analyzeAnomalies(tenantId, dto.storeId);
+    created.push(...anomalySuggestions);
+
+    return created;
+  }
+
+  /**
+   * Reorder analysis raporundan düşük stok günü kalan ürünleri bulur.
+   * Her biri için DEMAND_FORECAST önerisi oluşturur (henüz PENDING yoksa).
+   *
+   * suggestedData şeması:
+   * {
+   *   storeId, productVariantId, productName?, variantName?,
+   *   currentQuantity, daysOfStockLeft, safetyStockDays, forecastedDemandPerDay
+   * }
+   */
+  private async analyzeDemandForecast(
+    tenantId: string,
+    storeId?: string,
+  ): Promise<AiActionSuggestion[]> {
+    const created: AiActionSuggestion[] = [];
+
+    const result = await this.toolService.execute({
+      name: 'reorder_analysis_report',
+      args: { storeId, limit: 30 },
+    });
+
+    if (!result.ok || !Array.isArray((result.data as any)?.data)) {
+      return created;
+    }
+
+    const rows: any[] = (result.data as any).data;
+
+    for (const row of rows) {
+      const variantId = row.productVariantId;
+      const resolvedStoreId = row.storeId ?? storeId;
+      if (!variantId || !resolvedStoreId) continue;
+
+      const daysOfStockLeft = Number(row.daysOfStockLeft ?? row.daysLeft ?? 0);
+      const safetyStockDays = Number(row.safetyStockDays ?? 14);
+
+      // Yalnızca güvenlik stoğu günü sınırının altındaki ürünler için öneri üret
+      if (daysOfStockLeft >= safetyStockDays) continue;
+
+      // Bu varyant için zaten PENDING forecast var mı?
+      if (await this.pendingExists_generic(tenantId, AiActionType.DEMAND_FORECAST, 'productVariantId', variantId)) {
+        continue;
+      }
+
+      const currentQty = Number(row.currentQuantity ?? row.quantity ?? 0);
+      const avgDailyDemand = Number(row.avgDailySales ?? row.avgDailyDemand ?? 0);
+      const forecastedDemand = Math.ceil(avgDailyDemand * safetyStockDays * 1.2); // %20 tampon
+
+      const suggestion = this.repo.create({
+        tenantId,
+        actionType: AiActionType.DEMAND_FORECAST,
+        suggestedData: {
+          storeId: resolvedStoreId,
+          productVariantId: variantId,
+          productName: row.productName ?? null,
+          variantName: row.variantName ?? null,
+          currentQuantity: currentQty,
+          daysOfStockLeft,
+          safetyStockDays,
+          forecastedDemandPerDay: avgDailyDemand,
+          recommendedOrderQty: Math.max(forecastedDemand, 1),
+          supplierId: row.supplierId ?? null,
+        },
+        rationale: [
+          `${row.productName ?? 'Ürün'} / ${row.variantName ?? variantId}:`,
+          `mevcut stok ${daysOfStockLeft} günlük, güvenlik eşiği ${safetyStockDays} gün.`,
+          `Günlük ortalama talep ${avgDailyDemand.toFixed(1)} adet;`,
+          `${safetyStockDays} günlük tampon için ${Math.max(forecastedDemand, 1)} adet sipariş önerilmektedir.`,
+        ].join(' '),
+      });
+
+      created.push(await this.repo.save(suggestion));
+    }
+
+    return created;
+  }
+
+  /**
+   * Haftalık karşılaştırma raporundan ani satış spike veya drop'u tespit eder.
+   * Haftalık değişim >= %40 olan mağaza/metrik kombinasyonları için ANOMALY_ALERT üretir.
+   *
+   * suggestedData şeması:
+   * {
+   *   storeId, metric, currentWeekValue, previousWeekValue,
+   *   changePercent, direction: 'UP' | 'DOWN', detectedAt
+   * }
+   */
+  private async analyzeAnomalies(
+    tenantId: string,
+    storeId?: string,
+  ): Promise<AiActionSuggestion[]> {
+    const created: AiActionSuggestion[] = [];
+
+    const result = await this.toolService.execute({
+      name: 'week_comparison_report',
+      args: { storeId, weeks: 2 },
+    });
+
+    if (!result.ok) return created;
+
+    // week_comparison_report dönen yapı: data ya array ya da tek nesne olabilir
+    const rows: any[] = Array.isArray(result.data)
+      ? result.data
+      : Array.isArray((result.data as any)?.data)
+        ? (result.data as any).data
+        : [result.data];
+
+    const ANOMALY_THRESHOLD_PCT = 40; // %40 değişim eşiği
+
+    for (const row of rows) {
+      const resolvedStoreId = row.storeId ?? storeId;
+      if (!resolvedStoreId) continue;
+
+      // Rapor satırındaki metrikleri incele: revenue, orderCount, avgOrderValue
+      const metricsToCheck: Array<{ key: string; label: string }> = [
+        { key: 'revenue',       label: 'Ciro'          },
+        { key: 'orderCount',    label: 'Sipariş sayısı' },
+        { key: 'avgOrderValue', label: 'Ortalama sepet' },
+      ];
+
+      for (const { key, label } of metricsToCheck) {
+        const current  = Number(row[`current${key.charAt(0).toUpperCase() + key.slice(1)}`]  ?? row[`currentWeek${key.charAt(0).toUpperCase() + key.slice(1)}`]  ?? row[key]        ?? 0);
+        const previous = Number(row[`previous${key.charAt(0).toUpperCase() + key.slice(1)}`] ?? row[`previousWeek${key.charAt(0).toUpperCase() + key.slice(1)}`] ?? row[`prev${key.charAt(0).toUpperCase() + key.slice(1)}`] ?? 0);
+
+        if (previous === 0) continue; // Bölme sıfır koruması
+
+        const changePercent = ((current - previous) / previous) * 100;
+        if (Math.abs(changePercent) < ANOMALY_THRESHOLD_PCT) continue;
+
+        const direction: 'UP' | 'DOWN' = changePercent > 0 ? 'UP' : 'DOWN';
+
+        // Bu mağaza + metrik için zaten PENDING anomali var mı?
+        if (await this.pendingExists_generic(tenantId, AiActionType.ANOMALY_ALERT, 'storeId', resolvedStoreId)) {
+          break; // Bu mağaza için zaten uyarı mevcut — sonraki mağazaya geç
+        }
+
+        const suggestion = this.repo.create({
+          tenantId,
+          actionType: AiActionType.ANOMALY_ALERT,
+          suggestedData: {
+            storeId: resolvedStoreId,
+            metric: key,
+            metricLabel: label,
+            currentWeekValue: current,
+            previousWeekValue: previous,
+            changePercent: parseFloat(changePercent.toFixed(1)),
+            direction,
+            detectedAt: new Date().toISOString(),
+          },
+          rationale: [
+            `${label} bu hafta önceki haftaya göre`,
+            `%${Math.abs(changePercent).toFixed(1)} ${direction === 'UP' ? 'arttı' : 'düştü'}`,
+            `(${previous.toFixed(0)} → ${current.toFixed(0)}).`,
+            `Bu ani değişiklik inceleme gerektirebilir.`,
+          ].join(' '),
+        });
+
+        created.push(await this.repo.save(suggestion));
+        break; // Her mağaza için en fazla 1 anomali uyarısı
+      }
+    }
+
     return created;
   }
 
@@ -190,9 +387,20 @@ export class ActionAiService {
 
   /**
    * İnsan onayladığında:
-   * - CREATE_PO_DRAFT → Draft PO oluşturur (hemen uygulanır)
+   *
+   * - CREATE_PO_DRAFT  → Draft PO doğrudan oluşturulur.
+   *   @ApprovalBypass  Bu akış kasıtlı olarak approval zincirini atlar:
+   *   AI öneri sayfasındaki "Onayla" butonu insan onayı görevi görür.
+   *   PO DRAFT statüsünde oluşturulur; onay için ikinci bir ApprovalRequest
+   *   açmak gereksiz çift onay adımı yaratır. Procurement ekibi PO'yu
+   *   doğrudan APPROVED'a çekebilir (`PATCH /procurement/:id/approve`).
+   *   Eğer ileride PO onay akışı zorunlu hale gelirse, bu case'i
+   *   `approvalService.create({ entityType: PURCHASE_ORDER })` ile değiştirin.
+   *
    * - PRICE_ADJUSTMENT → ApprovalRequest(PRICE_OVERRIDE, L2) oluşturur
    * - STOCK_ADJUSTMENT → ApprovalRequest(STOCK_ADJUSTMENT, L1) oluşturur
+   * - DEMAND_FORECAST  → Sadece audit log (kullanıcı "incelendi" der, manuel aksiyon alır)
+   * - ANOMALY_ALERT    → Sadece audit log (kullanıcı "incelendi" der, manuel aksiyon alır)
    */
   async confirm(id: string): Promise<AiActionSuggestion> {
     const suggestion = await this.findOrThrow(id);
@@ -203,6 +411,7 @@ export class ActionAiService {
 
     switch (suggestion.actionType) {
       case AiActionType.CREATE_PO_DRAFT: {
+        // @ApprovalBypass — Bkz. JSDoc açıklaması
         const po = await this.procurementService.createPurchaseOrder(
           suggestion.suggestedData as any,
         );
@@ -227,6 +436,14 @@ export class ActionAiService {
           requesterNotes: `AI öneri #${id} onayından oluşturuldu.`,
         });
         suggestion.approvalRequestId = approval.id;
+        break;
+      }
+
+      case AiActionType.DEMAND_FORECAST:
+      case AiActionType.ANOMALY_ALERT: {
+        // Bilgi amaçlı öneri türleri — "okundu / incelendi" olarak işaretlenir.
+        // Kullanıcı gerekli görürse ilgili raporları inceleyip manuel aksiyon alır.
+        // Audit log zaten aşağıda yazılmaktadır; burada ek işlem gerekmez.
         break;
       }
     }

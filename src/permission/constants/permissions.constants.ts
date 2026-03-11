@@ -126,6 +126,10 @@ export const Permissions = {
   // ─── AI Aksiyonlar ───────────────────────────────────
   AI_ACTION_CONFIRM: 'AI_ACTION_CONFIRM',
 
+  // ─── e-Fatura / e-Arşiv ─────────────────────────────
+  EINVOICE_READ:   'EINVOICE_READ',
+  EINVOICE_MANAGE: 'EINVOICE_MANAGE',
+
   // ─── Sistem ─────────────────────────────────────────
   EXCHANGE_RATE_READ:   'EXCHANGE_RATE_READ',
   EXCHANGE_RATE_MANAGE: 'EXCHANGE_RATE_MANAGE',
@@ -245,6 +249,9 @@ export const PERMISSION_META: Record<
   INTEGRATION_MANAGE: { group: 'Entegrasyon', description: 'Entegrasyon bağlantısı oluşturma/güncelleme/silme ve DLQ yönetimi' },
 
   AI_ACTION_CONFIRM: { group: 'AI', description: 'AI eylem önerilerini onaylama (PO oluşturma, fiyat/stok düzeltme talebi)' },
+
+  EINVOICE_READ:   { group: 'e-Fatura', description: 'e-Fatura / e-Arşiv belgelerini görüntüleme' },
+  EINVOICE_MANAGE: { group: 'e-Fatura', description: 'e-Fatura / e-Arşiv belgesi oluşturma, iletme ve iptal etme' },
 
   EXCHANGE_RATE_READ:   { group: 'Sistem', description: 'Döviz kurlarını görüntüleme' },
   EXCHANGE_RATE_MANAGE: { group: 'Sistem', description: 'Tenant bazlı döviz kuru override yönetimi' },
@@ -370,6 +377,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.INTEGRATION_READ,
     Permissions.INTEGRATION_MANAGE,
     Permissions.AI_ACTION_CONFIRM,
+    Permissions.EINVOICE_READ,
+    Permissions.EINVOICE_MANAGE,
     Permissions.EXCHANGE_RATE_READ,
     Permissions.EXCHANGE_RATE_MANAGE,
     Permissions.AI_CHAT,

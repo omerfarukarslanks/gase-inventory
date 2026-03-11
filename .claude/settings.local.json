@@ -37,7 +37,21 @@
       "Bash(node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")",
       "Bash(PATH=\"$HOME/.nvm/versions/node/v22.12.0/bin:$PATH\" npx tsc --noEmit)",
       "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")",
-      "Bash(grep -A 15 \"scope.mode === ''context-store''\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/reports/reports.service.ts)"
+      "Bash(grep -A 15 \"scope.mode === ''context-store''\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/reports/reports.service.ts)",
+      "Bash(node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''inherit'', cwd: process.cwd\\(\\)}\\)\")",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''inherit'', cwd: ''/Users/omerfarukarslan/Desktop/projects/gase-inventory''}\\)\")",
+      "Bash(export NVM_DIR=\"$HOME/.nvm\")",
+      "Bash(. \"$NVM_DIR/nvm.sh\")",
+      "Bash(source \"$NVM_DIR/nvm.sh\")",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node /Users/omerfarukarslan/Desktop/projects/gase-inventory/node_modules/.bin/tsc --noEmit)",
+      "Bash(JEST_DISABLE_WATCHMAN=1 ~/.nvm/versions/node/v22.12.0/bin/node node_modules/.bin/jest --testPathPattern=\"procurement.service.spec|inventory.service.spec\" --runInBand --watchman=false)",
+      "Bash(JEST_DISABLE_WATCHMAN=1 ~/.nvm/versions/node/v22.12.0/bin/node node_modules/.bin/jest --testPathPatterns=\"procurement.service.spec|inventory.service.spec\" --runInBand --watchman=false)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(tee /tmp/tsc-out.txt)",
+      "Read(//tmp/**)",
+      "Bash(echo \"EXIT:$?\")",
+      "Bash(nvm use 22)",
+      "Bash(nvm use 22 --silent)"
     ]
   }
 }

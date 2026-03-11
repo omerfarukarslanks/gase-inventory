@@ -8,8 +8,25 @@ import {
 } from 'typeorm';
 
 export enum ApprovalEntityType {
+  /** Stok düzeltme talebi (L1) */
   STOCK_ADJUSTMENT = 'STOCK_ADJUSTMENT',
+  /** Fiyat override talebi (L2) */
   PRICE_OVERRIDE   = 'PRICE_OVERRIDE',
+  /**
+   * Satın alma siparişi onayı (L1).
+   * requestData: { purchaseOrderId, totalAmount, currency, supplierId }
+   */
+  PURCHASE_ORDER   = 'PURCHASE_ORDER',
+  /**
+   * Satış iadesi onayı (L1).
+   * requestData: { saleReturnId, saleId, totalRefundAmount, lines: [...] }
+   */
+  SALE_RETURN      = 'SALE_RETURN',
+  /**
+   * Periyodik stok sayım farkı düzeltmesi (L1).
+   * requestData: { countSessionId, storeId, lines: [{ productVariantId, systemQty, countedQty, diff }] }
+   */
+  COUNT_ADJUSTMENT = 'COUNT_ADJUSTMENT',
 }
 
 export enum ApprovalStatus {

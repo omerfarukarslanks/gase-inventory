@@ -36,6 +36,7 @@ import { TradeModule } from './trade/trade.module';
 import { IntegrationModule } from './integration/integration.module';
 import { SyncModule } from './sync/sync.module';
 import { ApprovalModule } from './approval/approval.module';
+import { EInvoiceModule } from './e-invoice/e-invoice.module';
 import { JwtAuthGuard } from './auth/jwt.auth.guard';
 import { PermissionGuard } from './common/guards/permission.guard';
 
@@ -120,6 +121,7 @@ import { PermissionGuard } from './common/guards/permission.guard';
     IntegrationModule,
     SyncModule,
     ApprovalModule,
+    EInvoiceModule,
   ],
   controllers: [AppController],
   providers: [

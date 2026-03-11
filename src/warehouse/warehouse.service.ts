@@ -12,13 +12,22 @@ import {
   CountSessionStatus,
 } from './entities/count-session.entity';
 import { CountLine } from './entities/count-line.entity';
+import { PutawayTask, PutawayTaskStatus } from './entities/putaway-task.entity';
+import { Wave, WaveStatus } from './entities/wave.entity';
+import { PickingTask, PickingTaskStatus } from './entities/picking-task.entity';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { InventoryService } from 'src/inventory/inventory.service';
 import {
   AddCountLineDto,
+  AssignPickingTaskDto,
+  AssignPutawayTaskDto,
+  CompletePickingTaskDto,
   CreateCountSessionDto,
   CreateLocationDto,
+  CreatePickingTaskDto,
+  CreatePutawayTaskDto,
   CreateWarehouseDto,
+  CreateWaveDto,
   UpdateCountLineDto,
   UpdateLocationDto,
   UpdateWarehouseDto,
@@ -35,6 +44,12 @@ export class WarehouseService {
     private readonly sessionRepo: Repository<CountSession>,
     @InjectRepository(CountLine)
     private readonly lineRepo: Repository<CountLine>,
+    @InjectRepository(PutawayTask)
+    private readonly putawayRepo: Repository<PutawayTask>,
+    @InjectRepository(Wave)
+    private readonly waveRepo: Repository<Wave>,
+    @InjectRepository(PickingTask)
+    private readonly pickingRepo: Repository<PickingTask>,
     private readonly appContext: AppContextService,
     private readonly inventoryService: InventoryService,
     private readonly dataSource: DataSource,
@@ -307,5 +322,242 @@ export class WarehouseService {
       session.updatedById = userId;
       return manager.getRepository(CountSession).save(session);
     });
+  }
+
+  // ---- Putaway Tasks ----
+
+  async createPutawayTask(dto: CreatePutawayTaskDto): Promise<PutawayTask> {
+    const tenantId = this.getTenantId();
+    const userId = this.getUserId();
+    await this.findWarehouseOrThrow(dto.warehouseId);
+    const toLocation = await this.findLocationOrThrow(dto.toLocationId);
+
+    const task = this.putawayRepo.create({
+      tenant: { id: tenantId } as any,
+      warehouseId: dto.warehouseId,
+      productVariantId: dto.productVariantId,
+      quantity: dto.quantity,
+      toLocation,
+      goodsReceiptId: dto.goodsReceiptId,
+      notes: dto.notes,
+      status: PutawayTaskStatus.PENDING,
+      createdById: userId,
+      updatedById: userId,
+    });
+    return this.putawayRepo.save(task);
+  }
+
+  async listPutawayTasks(warehouseId?: string): Promise<PutawayTask[]> {
+    const tenantId = this.getTenantId();
+    const qb = this.putawayRepo
+      .createQueryBuilder('p')
+      .where('p.tenantId = :tenantId', { tenantId })
+      .orderBy('p.createdAt', 'DESC');
+    if (warehouseId) {
+      qb.andWhere('p.warehouseId = :warehouseId', { warehouseId });
+    }
+    return qb.getMany();
+  }
+
+  async getPutawayTask(id: string): Promise<PutawayTask> {
+    const tenantId = this.getTenantId();
+    const task = await this.putawayRepo.findOne({
+      where: { id, tenant: { id: tenantId } },
+    });
+    if (!task) throw new NotFoundException(`Putaway görevi bulunamadı: ${id}`);
+    return task;
+  }
+
+  async assignPutawayTask(id: string, dto: AssignPutawayTaskDto): Promise<PutawayTask> {
+    const task = await this.getPutawayTask(id);
+    if (task.status === PutawayTaskStatus.COMPLETED || task.status === PutawayTaskStatus.CANCELLED) {
+      throw new BadRequestException('Tamamlanmış veya iptal edilmiş görev atanamaz.');
+    }
+    task.assignedToUserId = dto.userId;
+    task.status = PutawayTaskStatus.IN_PROGRESS;
+    task.updatedById = this.getUserId();
+    return this.putawayRepo.save(task);
+  }
+
+  async completePutawayTask(id: string): Promise<PutawayTask> {
+    const task = await this.getPutawayTask(id);
+    if (task.status === PutawayTaskStatus.COMPLETED) {
+      throw new BadRequestException('Görev zaten tamamlanmış.');
+    }
+    if (task.status === PutawayTaskStatus.CANCELLED) {
+      throw new BadRequestException('İptal edilmiş görev tamamlanamaz.');
+    }
+    task.status = PutawayTaskStatus.COMPLETED;
+    task.completedAt = new Date();
+    task.updatedById = this.getUserId();
+    return this.putawayRepo.save(task);
+  }
+
+  async cancelPutawayTask(id: string): Promise<PutawayTask> {
+    const task = await this.getPutawayTask(id);
+    if (task.status === PutawayTaskStatus.COMPLETED) {
+      throw new BadRequestException('Tamamlanmış görev iptal edilemez.');
+    }
+    task.status = PutawayTaskStatus.CANCELLED;
+    task.updatedById = this.getUserId();
+    return this.putawayRepo.save(task);
+  }
+
+  // ---- Waves ----
+
+  async createWave(dto: CreateWaveDto): Promise<Wave> {
+    const tenantId = this.getTenantId();
+    const userId = this.getUserId();
+    await this.findWarehouseOrThrow(dto.warehouseId);
+
+    const wave = this.waveRepo.create({
+      tenant: { id: tenantId } as any,
+      warehouseId: dto.warehouseId,
+      code: dto.code,
+      notes: dto.notes,
+      status: WaveStatus.OPEN,
+      createdById: userId,
+      updatedById: userId,
+    });
+    return this.waveRepo.save(wave);
+  }
+
+  async listWaves(warehouseId?: string): Promise<Wave[]> {
+    const tenantId = this.getTenantId();
+    const qb = this.waveRepo
+      .createQueryBuilder('w')
+      .where('w.tenantId = :tenantId', { tenantId })
+      .orderBy('w.createdAt', 'DESC');
+    if (warehouseId) {
+      qb.andWhere('w.warehouseId = :warehouseId', { warehouseId });
+    }
+    return qb.getMany();
+  }
+
+  async getWave(id: string): Promise<Wave> {
+    const tenantId = this.getTenantId();
+    const wave = await this.waveRepo.findOne({ where: { id, tenant: { id: tenantId } } });
+    if (!wave) throw new NotFoundException(`Wave bulunamadı: ${id}`);
+    return wave;
+  }
+
+  async startWave(id: string): Promise<Wave> {
+    const wave = await this.getWave(id);
+    if (wave.status !== WaveStatus.OPEN) {
+      throw new BadRequestException('Yalnızca OPEN durumundaki wave başlatılabilir.');
+    }
+    wave.status = WaveStatus.IN_PROGRESS;
+    wave.startedAt = new Date();
+    wave.updatedById = this.getUserId();
+    return this.waveRepo.save(wave);
+  }
+
+  async completeWave(id: string): Promise<Wave> {
+    const wave = await this.getWave(id);
+    if (wave.status === WaveStatus.COMPLETED) {
+      throw new BadRequestException('Wave zaten tamamlanmış.');
+    }
+    if (wave.status === WaveStatus.CANCELLED) {
+      throw new BadRequestException('İptal edilmiş wave tamamlanamaz.');
+    }
+    wave.status = WaveStatus.COMPLETED;
+    wave.completedAt = new Date();
+    wave.updatedById = this.getUserId();
+    return this.waveRepo.save(wave);
+  }
+
+  // ---- Picking Tasks ----
+
+  async createPickingTask(dto: CreatePickingTaskDto): Promise<PickingTask> {
+    const tenantId = this.getTenantId();
+    const userId = this.getUserId();
+    await this.findWarehouseOrThrow(dto.warehouseId);
+    const fromLocation = await this.findLocationOrThrow(dto.fromLocationId);
+
+    let wave: Wave | undefined;
+    if (dto.waveId) {
+      wave = await this.getWave(dto.waveId);
+      if (wave.status === WaveStatus.COMPLETED || wave.status === WaveStatus.CANCELLED) {
+        throw new BadRequestException('Tamamlanmış veya iptal edilmiş wave\'e görev eklenemez.');
+      }
+    }
+
+    const task = this.pickingRepo.create({
+      tenant: { id: tenantId } as any,
+      warehouseId: dto.warehouseId,
+      productVariantId: dto.productVariantId,
+      requestedQuantity: dto.requestedQuantity,
+      fromLocation,
+      wave: wave ?? undefined,
+      saleId: dto.saleId,
+      notes: dto.notes,
+      status: PickingTaskStatus.PENDING,
+      createdById: userId,
+      updatedById: userId,
+    });
+    return this.pickingRepo.save(task);
+  }
+
+  async listPickingTasks(warehouseId?: string, waveId?: string): Promise<PickingTask[]> {
+    const tenantId = this.getTenantId();
+    const qb = this.pickingRepo
+      .createQueryBuilder('p')
+      .where('p.tenantId = :tenantId', { tenantId })
+      .orderBy('p.createdAt', 'DESC');
+    if (warehouseId) {
+      qb.andWhere('p.warehouseId = :warehouseId', { warehouseId });
+    }
+    if (waveId) {
+      qb.andWhere('p.waveId = :waveId', { waveId });
+    }
+    return qb.getMany();
+  }
+
+  async getPickingTask(id: string): Promise<PickingTask> {
+    const tenantId = this.getTenantId();
+    const task = await this.pickingRepo.findOne({
+      where: { id, tenant: { id: tenantId } },
+    });
+    if (!task) throw new NotFoundException(`Picking görevi bulunamadı: ${id}`);
+    return task;
+  }
+
+  async assignPickingTask(id: string, dto: AssignPickingTaskDto): Promise<PickingTask> {
+    const task = await this.getPickingTask(id);
+    if (task.status === PickingTaskStatus.COMPLETED || task.status === PickingTaskStatus.CANCELLED) {
+      throw new BadRequestException('Tamamlanmış veya iptal edilmiş görev atanamaz.');
+    }
+    task.assignedToUserId = dto.userId;
+    task.status = PickingTaskStatus.IN_PROGRESS;
+    task.updatedById = this.getUserId();
+    return this.pickingRepo.save(task);
+  }
+
+  async completePickingTask(id: string, dto: CompletePickingTaskDto): Promise<PickingTask> {
+    const task = await this.getPickingTask(id);
+    if (task.status === PickingTaskStatus.COMPLETED) {
+      throw new BadRequestException('Görev zaten tamamlanmış.');
+    }
+    if (task.status === PickingTaskStatus.CANCELLED) {
+      throw new BadRequestException('İptal edilmiş görev tamamlanamaz.');
+    }
+    task.pickedQuantity = dto.pickedQuantity;
+    task.status =
+      dto.pickedQuantity < task.requestedQuantity
+        ? PickingTaskStatus.SHORT_PICK
+        : PickingTaskStatus.COMPLETED;
+    task.completedAt = new Date();
+    task.updatedById = this.getUserId();
+    return this.pickingRepo.save(task);
+  }
+
+  async cancelPickingTask(id: string): Promise<PickingTask> {
+    const task = await this.getPickingTask(id);
+    if (task.status === PickingTaskStatus.COMPLETED) {
+      throw new BadRequestException('Tamamlanmış görev iptal edilemez.');
+    }
+    task.status = PickingTaskStatus.CANCELLED;
+    task.updatedById = this.getUserId();
+    return this.pickingRepo.save(task);
   }
 }

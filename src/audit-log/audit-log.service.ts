@@ -12,6 +12,11 @@ export interface LogPayload {
   diff?: Record<string, any>;
   /** Çağıran userId'yi override et (sistem job için null geçilebilir) */
   userId?: string | null;
+  /**
+   * Cron/scheduler context'inde CLS aktif olmadığından tenantId otomatik çözülemez.
+   * Bu durumlarda tenantId açıkça geçilmeli; geçilmezse CLS'den alınmaya çalışılır.
+   */
+  tenantId?: string;
 }
 
 @Injectable()
@@ -29,7 +34,7 @@ export class AuditLogService {
    * aynı manager'ı geçirmek veri tutarlılığı için önerilir.
    */
   async log(payload: LogPayload, manager?: EntityManager): Promise<void> {
-    const tenantId = this.appContext.getTenantIdOrThrow();
+    const tenantId = payload.tenantId ?? this.appContext.getTenantIdOrThrow();
     const actorId =
       payload.userId !== undefined
         ? (payload.userId ?? undefined)

@@ -17,9 +17,15 @@ import { Permissions } from 'src/permission/constants/permissions.constants';
 import { WarehouseService } from './warehouse.service';
 import {
   AddCountLineDto,
+  AssignPickingTaskDto,
+  AssignPutawayTaskDto,
+  CompletePickingTaskDto,
   CreateCountSessionDto,
   CreateLocationDto,
+  CreatePickingTaskDto,
+  CreatePutawayTaskDto,
   CreateWarehouseDto,
+  CreateWaveDto,
   UpdateCountLineDto,
   UpdateLocationDto,
   UpdateWarehouseDto,
@@ -152,5 +158,133 @@ export class WarehouseController {
   @RequirePermission(Permissions.COUNT_SESSION_ADJUST)
   closeCountSession(@Param('id') id: string) {
     return this.warehouseService.closeCountSession(id);
+  }
+
+  // ---- Putaway Tasks ----
+
+  @Post('putaway-tasks')
+  @ApiOperation({ summary: 'Yeni putaway (yerleştirme) görevi oluştur' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  createPutawayTask(@Body() dto: CreatePutawayTaskDto) {
+    return this.warehouseService.createPutawayTask(dto);
+  }
+
+  @Get('putaway-tasks')
+  @ApiOperation({ summary: 'Putaway görevleri listesi' })
+  @RequirePermission(Permissions.WAREHOUSE_READ)
+  listPutawayTasks(@Query('warehouseId') warehouseId?: string) {
+    return this.warehouseService.listPutawayTasks(warehouseId);
+  }
+
+  @Get('putaway-tasks/:id')
+  @ApiOperation({ summary: 'Putaway görevi detayı' })
+  @RequirePermission(Permissions.WAREHOUSE_READ)
+  getPutawayTask(@Param('id') id: string) {
+    return this.warehouseService.getPutawayTask(id);
+  }
+
+  @Post('putaway-tasks/:id/assign')
+  @ApiOperation({ summary: 'Putaway görevini kullanıcıya ata' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  assignPutawayTask(@Param('id') id: string, @Body() dto: AssignPutawayTaskDto) {
+    return this.warehouseService.assignPutawayTask(id, dto);
+  }
+
+  @Post('putaway-tasks/:id/complete')
+  @ApiOperation({ summary: 'Putaway görevini tamamla' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  completePutawayTask(@Param('id') id: string) {
+    return this.warehouseService.completePutawayTask(id);
+  }
+
+  @Post('putaway-tasks/:id/cancel')
+  @ApiOperation({ summary: 'Putaway görevini iptal et' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  cancelPutawayTask(@Param('id') id: string) {
+    return this.warehouseService.cancelPutawayTask(id);
+  }
+
+  // ---- Waves ----
+
+  @Post('waves')
+  @ApiOperation({ summary: 'Yeni wave (toplu toplama dalgası) oluştur' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  createWave(@Body() dto: CreateWaveDto) {
+    return this.warehouseService.createWave(dto);
+  }
+
+  @Get('waves')
+  @ApiOperation({ summary: 'Wave listesi' })
+  @RequirePermission(Permissions.WAREHOUSE_READ)
+  listWaves(@Query('warehouseId') warehouseId?: string) {
+    return this.warehouseService.listWaves(warehouseId);
+  }
+
+  @Get('waves/:id')
+  @ApiOperation({ summary: 'Wave detayı' })
+  @RequirePermission(Permissions.WAREHOUSE_READ)
+  getWave(@Param('id') id: string) {
+    return this.warehouseService.getWave(id);
+  }
+
+  @Post('waves/:id/start')
+  @ApiOperation({ summary: 'Wave\'i başlat (OPEN → IN_PROGRESS)' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  startWave(@Param('id') id: string) {
+    return this.warehouseService.startWave(id);
+  }
+
+  @Post('waves/:id/complete')
+  @ApiOperation({ summary: 'Wave\'i tamamla' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  completeWave(@Param('id') id: string) {
+    return this.warehouseService.completeWave(id);
+  }
+
+  // ---- Picking Tasks ----
+
+  @Post('picking-tasks')
+  @ApiOperation({ summary: 'Yeni picking (toplama) görevi oluştur' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  createPickingTask(@Body() dto: CreatePickingTaskDto) {
+    return this.warehouseService.createPickingTask(dto);
+  }
+
+  @Get('picking-tasks')
+  @ApiOperation({ summary: 'Picking görevleri listesi' })
+  @RequirePermission(Permissions.WAREHOUSE_READ)
+  listPickingTasks(
+    @Query('warehouseId') warehouseId?: string,
+    @Query('waveId') waveId?: string,
+  ) {
+    return this.warehouseService.listPickingTasks(warehouseId, waveId);
+  }
+
+  @Get('picking-tasks/:id')
+  @ApiOperation({ summary: 'Picking görevi detayı' })
+  @RequirePermission(Permissions.WAREHOUSE_READ)
+  getPickingTask(@Param('id') id: string) {
+    return this.warehouseService.getPickingTask(id);
+  }
+
+  @Post('picking-tasks/:id/assign')
+  @ApiOperation({ summary: 'Picking görevini kullanıcıya ata' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  assignPickingTask(@Param('id') id: string, @Body() dto: AssignPickingTaskDto) {
+    return this.warehouseService.assignPickingTask(id, dto);
+  }
+
+  @Post('picking-tasks/:id/complete')
+  @ApiOperation({ summary: 'Picking görevini tamamla (toplanan miktarı gir)' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  completePickingTask(@Param('id') id: string, @Body() dto: CompletePickingTaskDto) {
+    return this.warehouseService.completePickingTask(id, dto);
+  }
+
+  @Post('picking-tasks/:id/cancel')
+  @ApiOperation({ summary: 'Picking görevini iptal et' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  cancelPickingTask(@Param('id') id: string) {
+    return this.warehouseService.cancelPickingTask(id);
   }
 }

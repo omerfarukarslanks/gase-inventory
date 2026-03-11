@@ -14,6 +14,16 @@ export enum AiActionType {
   PRICE_ADJUSTMENT   = 'PRICE_ADJUSTMENT',
   /** Stok düzeltme onay talebi oluştur */
   STOCK_ADJUSTMENT   = 'STOCK_ADJUSTMENT',
+  /**
+   * Talep tahmini — reorder_analysis + seasonality verilerinden üretilir.
+   * Kullanıcı onayı: Replenishment rule güncelleme / PO tavsiyesi.
+   */
+  DEMAND_FORECAST    = 'DEMAND_FORECAST',
+  /**
+   * Anomali uyarısı — haftalık karşılaştırmada ani spike / drop.
+   * Kullanıcı onayı: Audit log (incelendi kaydı).
+   */
+  ANOMALY_ALERT      = 'ANOMALY_ALERT',
 }
 
 export enum AiActionStatus {
@@ -30,6 +40,8 @@ export enum AiActionStatus {
  *   CREATE_PO_DRAFT   → ProcurementService.createPurchaseOrder() (Draft, onaysız uygulama)
  *   PRICE_ADJUSTMENT  → ApprovalRequest (PRICE_OVERRIDE, L2)
  *   STOCK_ADJUSTMENT  → ApprovalRequest (STOCK_ADJUSTMENT, L1)
+ *   DEMAND_FORECAST   → Audit log (bilgi amaçlı — kullanıcı incelendi olarak işaretler)
+ *   ANOMALY_ALERT     → Audit log (bilgi amaçlı — kullanıcı incelendi olarak işaretler)
  */
 @Entity({ name: 'ai_action_suggestions' })
 @Index('idx_ai_action_tenant_status', ['tenantId', 'status'])

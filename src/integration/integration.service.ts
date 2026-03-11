@@ -10,6 +10,8 @@ import {
   CreateIntegrationConnectionDto,
   UpdateIntegrationConnectionDto,
 } from './dto/integration.dto';
+import { CryptoService } from './crypto.service';
+import { ProviderFactory } from './provider.factory';
 
 @Injectable()
 export class IntegrationService {
@@ -17,6 +19,8 @@ export class IntegrationService {
     @InjectRepository(IntegrationConnection)
     private readonly connRepo: Repository<IntegrationConnection>,
     private readonly appContext: AppContextService,
+    private readonly crypto: CryptoService,
+    private readonly providerFactory: ProviderFactory,
   ) {}
 
   private tenantId() { return this.appContext.getTenantIdOrThrow(); }
@@ -32,36 +36,47 @@ export class IntegrationService {
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
 
+  private encryptConfig(config: Record<string, any>): Record<string, any> {
+    if (!config || Object.keys(config).length === 0) return config;
+    return this.crypto.encrypt(config);
+  }
+
+  private decryptConfig(conn: IntegrationConnection): IntegrationConnection {
+    if (conn.config) conn.config = this.crypto.decrypt(conn.config);
+    return conn;
+  }
+
   async create(dto: CreateIntegrationConnectionDto): Promise<IntegrationConnection> {
     const conn = this.connRepo.create({
       tenant: { id: this.tenantId() } as any,
       provider: dto.provider,
       name: dto.name,
-      config: dto.config ?? {},
+      config: this.encryptConfig(dto.config ?? {}),
       createdById: this.userId(),
       updatedById: this.userId(),
     });
-    return this.connRepo.save(conn);
+    return this.decryptConfig(await this.connRepo.save(conn));
   }
 
   async list(): Promise<IntegrationConnection[]> {
-    return this.connRepo.find({
+    const conns = await this.connRepo.find({
       where: { tenant: { id: this.tenantId() } },
       order: { createdAt: 'DESC' },
     });
+    return conns.map((c) => this.decryptConfig(c));
   }
 
   async get(id: string): Promise<IntegrationConnection> {
-    return this.findOrThrow(id);
+    return this.decryptConfig(await this.findOrThrow(id));
   }
 
   async update(id: string, dto: UpdateIntegrationConnectionDto): Promise<IntegrationConnection> {
     const conn = await this.findOrThrow(id);
     if (dto.name   !== undefined) conn.name   = dto.name;
-    if (dto.config !== undefined) conn.config = dto.config;
+    if (dto.config !== undefined) conn.config = this.encryptConfig(dto.config);
     if (dto.status !== undefined) conn.status = dto.status;
     conn.updatedById = this.userId();
-    return this.connRepo.save(conn);
+    return this.decryptConfig(await this.connRepo.save(conn));
   }
 
   async delete(id: string): Promise<void> {
@@ -69,32 +84,40 @@ export class IntegrationService {
     await this.connRepo.delete(id);
   }
 
-  // ── Test / Sync stubs ─────────────────────────────────────────────────────
+  // ── Test / Sync ───────────────────────────────────────────────────────────
 
-  /**
-   * Bağlantının canlı olup olmadığını test eder.
-   * Gerçek implementasyon sağlayıcıya ping atar; şimdilik stub.
-   */
-  async testConnection(id: string): Promise<{ success: boolean; message: string }> {
+  /** Sağlayıcıya gerçek HTTP ping atar; sonuca göre status günceller. */
+  async testConnection(id: string): Promise<{ success: boolean; message: string; latencyMs?: number }> {
     const conn = await this.findOrThrow(id);
-    // TODO: provider'a göre gerçek ping/OAuth check
-    conn.lastError = undefined;
-    conn.status = IntegrationStatus.ACTIVE;
+    const decrypted = this.crypto.decrypt(conn.config);
+
+    const provider = this.providerFactory.get(conn.provider);
+    const result   = await provider.ping(decrypted);
+
+    conn.status      = result.success ? IntegrationStatus.ACTIVE : IntegrationStatus.ERROR;
+    conn.lastError   = result.success ? undefined : result.message;
     conn.updatedById = this.userId();
     await this.connRepo.save(conn);
-    return { success: true, message: `${conn.provider} bağlantısı başarılı.` };
+
+    return { success: result.success, message: result.message, latencyMs: result.latencyMs };
   }
 
-  /**
-   * Manuel senkronizasyonu tetikler.
-   * Gerçek implementasyon outbox'a event yazar; şimdilik stub.
-   */
-  async triggerSync(id: string): Promise<{ queued: boolean }> {
+  /** Sağlayıcıya sync tetikler; lastSyncAt güncellenir. */
+  async triggerSync(id: string): Promise<{ queued: boolean; message: string }> {
     const conn = await this.findOrThrow(id);
-    conn.lastSyncAt = new Date();
-    conn.updatedById = this.userId();
-    await this.connRepo.save(conn);
-    // TODO: outbox'a sync event yaz
-    return { queued: true };
+    const decrypted = this.crypto.decrypt(conn.config);
+    const tenantId  = conn.tenant?.id ?? this.tenantId();
+
+    const provider = this.providerFactory.get(conn.provider);
+    const result   = await provider.sync(decrypted, tenantId, id);
+
+    if (result.queued) {
+      conn.lastSyncAt  = new Date();
+      conn.lastError   = undefined;
+      conn.updatedById = this.userId();
+      await this.connRepo.save(conn);
+    }
+
+    return { queued: result.queued, message: result.message };
   }
 }

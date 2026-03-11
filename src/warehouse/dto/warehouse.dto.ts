@@ -136,3 +136,113 @@ export class UpdateCountLineDto {
   @IsNumber()
   countedQuantity: number;
 }
+
+// ---- Putaway Tasks ----
+
+export class CreatePutawayTaskDto {
+  @ApiProperty({ description: 'Depo ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  warehouseId: string;
+
+  @ApiProperty({ description: 'Yerleştirilecek ürün varyant ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  productVariantId: string;
+
+  @ApiProperty({ description: 'Miktar', example: 20 })
+  @IsNumber()
+  quantity: number;
+
+  @ApiProperty({ description: 'Hedef lokasyon ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  toLocationId: string;
+
+  @ApiPropertyOptional({ description: 'İlgili mal kabul belgesi ID' })
+  @IsOptional()
+  @IsUUID('4')
+  goodsReceiptId?: string;
+
+  @ApiPropertyOptional({ description: 'Notlar' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class AssignPutawayTaskDto {
+  @ApiProperty({ description: 'Göreve atanacak kullanıcı ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId: string;
+}
+
+// ---- Wave ----
+
+export class CreateWaveDto {
+  @ApiProperty({ description: 'Depo ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  warehouseId: string;
+
+  @ApiProperty({ example: 'WAVE-20260311-001', description: 'Wave kodu' })
+  @IsString()
+  @IsNotEmpty()
+  code: string;
+
+  @ApiPropertyOptional({ description: 'Notlar' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+// ---- Picking Tasks ----
+
+export class CreatePickingTaskDto {
+  @ApiProperty({ description: 'Depo ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  warehouseId: string;
+
+  @ApiProperty({ description: 'Toplanacak ürün varyant ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  productVariantId: string;
+
+  @ApiProperty({ description: 'İstenen miktar', example: 5 })
+  @IsNumber()
+  requestedQuantity: number;
+
+  @ApiProperty({ description: 'Kaynak lokasyon ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  fromLocationId: string;
+
+  @ApiPropertyOptional({ description: 'İlgili satış ID' })
+  @IsOptional()
+  @IsUUID('4')
+  saleId?: string;
+
+  @ApiPropertyOptional({ description: 'Wave ID (batch picking için)' })
+  @IsOptional()
+  @IsUUID('4')
+  waveId?: string;
+
+  @ApiPropertyOptional({ description: 'Notlar' })
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class CompletePickingTaskDto {
+  @ApiProperty({ description: 'Fiilen toplanan miktar', example: 5 })
+  @IsNumber()
+  pickedQuantity: number;
+}
+
+export class AssignPickingTaskDto {
+  @ApiProperty({ description: 'Göreve atanacak kullanıcı ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  userId: string;
+}
