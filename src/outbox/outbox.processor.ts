@@ -42,15 +42,23 @@ export class OutboxProcessor {
       this.logger.debug(`Event işlendi: ${event.eventType} (${event.id})`);
     } catch (err) {
       const error = (err as Error).message;
-      const nextRetryAt = new Date(Date.now() + backoffMs(event.retryCount));
+      const nextRetryCount = event.retryCount + 1;
 
-      this.logger.warn(
-        `Event başarısız: ${event.eventType} (${event.id}) — ${error}. ` +
-        `RetryCount: ${event.retryCount + 1}/${MAX_RETRIES}. ` +
-        `Sonraki deneme: ${nextRetryAt.toISOString()}`,
-      );
-
-      await this.outboxService.markFailed(event.id, error, nextRetryAt);
+      if (nextRetryCount >= MAX_RETRIES) {
+        this.logger.error(
+          `Event dead-letter'a taşındı: ${event.eventType} (${event.id}) — ${error}. ` +
+          `RetryCount: ${nextRetryCount}/${MAX_RETRIES}.`,
+        );
+        await this.outboxService.markDeadLetter(event.id, error);
+      } else {
+        const nextRetryAt = new Date(Date.now() + backoffMs(event.retryCount));
+        this.logger.warn(
+          `Event başarısız: ${event.eventType} (${event.id}) — ${error}. ` +
+          `RetryCount: ${nextRetryCount}/${MAX_RETRIES}. ` +
+          `Sonraki deneme: ${nextRetryAt.toISOString()}`,
+        );
+        await this.outboxService.markFailed(event.id, error, nextRetryAt);
+      }
     }
   }
 

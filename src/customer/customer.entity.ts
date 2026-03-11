@@ -1,6 +1,6 @@
 import { ContactBase } from 'src/common/entity/contact-base.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
-import { Column, Entity, ManyToOne } from 'typeorm';
+import { Column, Entity, Index, ManyToOne } from 'typeorm';
 
 export enum Gender {
   MALE = 'male',
@@ -27,4 +27,9 @@ export class Customer extends ContactBase {
 
   @Column({ type: 'date', nullable: true })
   birthDate?: string;
+
+  /** Müşteri grubu ID (cross-module: plain UUID, FK yok) */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  customerGroupId?: string;
 }

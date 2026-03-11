@@ -8,6 +8,7 @@ import { ProductVariant } from 'src/product/product-variant.entity';
 import { StoreVariantStock } from './store-variant-stock.entity';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
+import { StockBalance } from './stock-balance.entity';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { Supplier } from 'src/supplier/supplier.entity';
       StoreVariantStock,
       StoreProductPrice,
       Supplier,
+      StockBalance,
     ]),
   ],
   providers: [InventoryService],

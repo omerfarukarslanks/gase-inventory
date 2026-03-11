@@ -53,6 +53,28 @@ export class ReceiveStockItemDto {
   @IsOptional()
   @IsObject()
   meta?: Record<string, any>;
+
+  // ---- Lot / lokasyon / seri (Faz 2) ----
+
+  @ApiPropertyOptional({ example: 'LOT-2025-001', description: 'Lot / parti numarası' })
+  @IsOptional()
+  @IsString()
+  lotNumber?: string;
+
+  @ApiPropertyOptional({ example: '2027-12-31', description: 'Son kullanma tarihi (YYYY-MM-DD)' })
+  @IsOptional()
+  @IsString()
+  expiryDate?: string;
+
+  @ApiPropertyOptional({ description: 'Depo lokasyon ID' })
+  @IsOptional()
+  @IsUUID('4')
+  locationId?: string;
+
+  @ApiPropertyOptional({ example: 'SN-ABC-001', description: 'Seri numarası' })
+  @IsOptional()
+  @IsString()
+  serialNumber?: string;
 }
 
 /**
@@ -132,4 +154,26 @@ export class ReceiveStockDto {
   @IsOptional()
   @IsObject()
   meta?: Record<string, any>;
+
+  // ---- Lot / lokasyon / seri (Faz 2) ----
+
+  @ApiPropertyOptional({ example: 'LOT-2025-001', description: 'Lot / parti numarası (Senaryo 1 ve 3)' })
+  @IsOptional()
+  @IsString()
+  lotNumber?: string;
+
+  @ApiPropertyOptional({ example: '2027-12-31', description: 'Son kullanma tarihi YYYY-MM-DD (Senaryo 1 ve 3)' })
+  @IsOptional()
+  @IsString()
+  expiryDate?: string;
+
+  @ApiPropertyOptional({ description: 'Depo lokasyon ID (Senaryo 1 ve 3)' })
+  @IsOptional()
+  @IsUUID('4')
+  locationId?: string;
+
+  @ApiPropertyOptional({ example: 'SN-ABC-001', description: 'Seri numarası (Senaryo 1 ve 3)' })
+  @IsOptional()
+  @IsString()
+  serialNumber?: string;
 }

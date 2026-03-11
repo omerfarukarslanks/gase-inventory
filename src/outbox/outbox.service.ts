@@ -78,4 +78,51 @@ export class OutboxService {
       .limit(limit)
       .execute();
   }
+
+  /** Maksimum retry dolduğunda event'i DEAD_LETTER'a taşır */
+  async markDeadLetter(eventId: string, error: string): Promise<void> {
+    await this.repo
+      .createQueryBuilder()
+      .update(OutboxEvent)
+      .set({
+        status: OutboxEventStatus.DEAD_LETTER,
+        lastError: error,
+      })
+      .where('id = :id', { id: eventId })
+      .execute();
+
+    await this.repo.increment({ id: eventId }, 'retryCount', 1);
+  }
+
+  /** Dead-letter event'leri listeler */
+  async fetchDeadLetters(tenantId?: string, limit = 50): Promise<OutboxEvent[]> {
+    const qb = this.repo
+      .createQueryBuilder('e')
+      .where('e.status = :status', { status: OutboxEventStatus.DEAD_LETTER })
+      .orderBy('e.updatedAt', 'DESC')
+      .limit(limit);
+
+    if (tenantId) {
+      qb.andWhere('e.tenantId = :tenantId', { tenantId });
+    }
+
+    return qb.getMany();
+  }
+
+  /** Dead-letter event'i manuel olarak yeniden PENDING'e alır */
+  async requeueDeadLetter(eventId: string): Promise<void> {
+    await this.repo.update(eventId, {
+      status: OutboxEventStatus.PENDING,
+      nextRetryAt: new Date(),
+      lastError: undefined,
+    });
+
+    // retryCount'u sıfırla ki yeniden tam deneme hakkı verilsin
+    await this.repo
+      .createQueryBuilder()
+      .update(OutboxEvent)
+      .set({ retryCount: 0 })
+      .where('id = :id', { id: eventId })
+      .execute();
+  }
 }

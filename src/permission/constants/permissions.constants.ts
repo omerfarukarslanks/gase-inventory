@@ -102,6 +102,21 @@ export const Permissions = {
 
   AUDIT_LOG_READ: 'AUDIT_LOG_READ',
 
+  // ─── Ticaret (Trade) ────────────────────────────────
+  TRADE_READ:   'TRADE_READ',
+  TRADE_MANAGE: 'TRADE_MANAGE',
+
+  // ─── Depo / Sayım ───────────────────────────────────
+  WAREHOUSE_MANAGE:     'WAREHOUSE_MANAGE',
+  WAREHOUSE_READ:       'WAREHOUSE_READ',
+  COUNT_SESSION_MANAGE: 'COUNT_SESSION_MANAGE',
+  COUNT_SESSION_READ:   'COUNT_SESSION_READ',
+  COUNT_SESSION_ADJUST: 'COUNT_SESSION_ADJUST',
+
+  // ─── Entegrasyon ────────────────────────────────────
+  INTEGRATION_READ:   'INTEGRATION_READ',
+  INTEGRATION_MANAGE: 'INTEGRATION_MANAGE',
+
   // ─── Sistem ─────────────────────────────────────────
   EXCHANGE_RATE_READ:   'EXCHANGE_RATE_READ',
   EXCHANGE_RATE_MANAGE: 'EXCHANGE_RATE_MANAGE',
@@ -203,6 +218,18 @@ export const PERMISSION_META: Record<
 
   AUDIT_LOG_READ: { group: 'Sistem', description: 'Audit log kayıtlarını görüntüleme' },
 
+  TRADE_READ:   { group: 'Ticaret', description: 'Müşteri grupları, kredi limitleri ve fiyat listelerini görüntüleme' },
+  TRADE_MANAGE: { group: 'Ticaret', description: 'Müşteri grubu, kredi limiti, ödeme vadesi ve fiyat listesi yönetimi' },
+
+  WAREHOUSE_MANAGE:     { group: 'Depo', description: 'Depo ve lokasyon oluşturma/güncelleme/silme' },
+  WAREHOUSE_READ:       { group: 'Depo', description: 'Depo ve lokasyon listeleme' },
+  COUNT_SESSION_MANAGE: { group: 'Depo', description: 'Sayım oturumu oluşturma ve satır ekleme' },
+  COUNT_SESSION_READ:   { group: 'Depo', description: 'Sayım oturumlarını görüntüleme' },
+  COUNT_SESSION_ADJUST: { group: 'Depo', description: 'Sayım oturumunu kapatma ve stok düzeltme uygulama' },
+
+  INTEGRATION_READ:   { group: 'Entegrasyon', description: 'Entegrasyon bağlantılarını görüntüleme' },
+  INTEGRATION_MANAGE: { group: 'Entegrasyon', description: 'Entegrasyon bağlantısı oluşturma/güncelleme/silme ve DLQ yönetimi' },
+
   EXCHANGE_RATE_READ:   { group: 'Sistem', description: 'Döviz kurlarını görüntüleme' },
   EXCHANGE_RATE_MANAGE: { group: 'Sistem', description: 'Tenant bazlı döviz kuru override yönetimi' },
   AI_CHAT:            { group: 'Sistem', description: 'AI asistan kullanımı' },
@@ -258,6 +285,12 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.REPLENISHMENT_READ,
     Permissions.REPLENISHMENT_ACCEPT,
     Permissions.REPLENISHMENT_DISMISS,
+    Permissions.WAREHOUSE_READ,
+    Permissions.COUNT_SESSION_MANAGE,
+    Permissions.COUNT_SESSION_READ,
+    Permissions.COUNT_SESSION_ADJUST,
+    Permissions.TRADE_READ,
+    Permissions.INTEGRATION_READ,
     Permissions.REPORT_STOCK_READ,
     Permissions.REPORT_SALES_READ,
     Permissions.REPORT_EMPLOYEE_READ,
@@ -296,6 +329,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.USER_CREATE,
     Permissions.USER_UPDATE,
     Permissions.USER_STORE_ASSIGN,
+    Permissions.TRADE_READ,
+    Permissions.TRADE_MANAGE,
+    Permissions.WAREHOUSE_MANAGE,
+    Permissions.WAREHOUSE_READ,
+    Permissions.COUNT_SESSION_MANAGE,
+    Permissions.COUNT_SESSION_READ,
+    Permissions.COUNT_SESSION_ADJUST,
     Permissions.REPORT_STOCK_READ,
     Permissions.REPORT_SALES_READ,
     Permissions.REPORT_FINANCIAL_READ,
@@ -303,6 +343,8 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.REPORT_CUSTOMER_READ,
     Permissions.REPORT_INVENTORY_READ,
     Permissions.AUDIT_LOG_READ,
+    Permissions.INTEGRATION_READ,
+    Permissions.INTEGRATION_MANAGE,
     Permissions.EXCHANGE_RATE_READ,
     Permissions.EXCHANGE_RATE_MANAGE,
     Permissions.AI_CHAT,

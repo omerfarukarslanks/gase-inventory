@@ -17,6 +17,7 @@ import { SellStockDto } from './dto/sell-stock.dto';
 import { AdjustStockDto, AdjustStockItemDto } from './dto/adjust-stock.dto';
 import { InventoryErrors } from 'src/common/errors/inventory.errors';
 import { StoreVariantStock } from './store-variant-stock.entity';
+import { StockBalance } from './stock-balance.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
 import { ListMovementsQueryDto, PaginatedMovementsResponse } from './dto/list-movements.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
@@ -43,6 +44,8 @@ export class InventoryService {
     private readonly storeProductPriceRepo: Repository<StoreProductPrice>,
     @InjectRepository(Supplier)
     private readonly supplierRepo: Repository<Supplier>,
+    @InjectRepository(StockBalance)
+    private readonly stockBalanceRepo: Repository<StockBalance>,
     private readonly appContext: AppContextService,
   ) {}
 
@@ -235,6 +238,92 @@ export class InventoryService {
     return repo.save(summary);
   }
 
+  /**
+   * Lot × lokasyon bazlı granüler bakiyeyi günceller.
+   * Lot veya lokasyon bilgisi olan hareketler için createMovement() tarafından çağrılır.
+   */
+  private async applyMovementToStockBalance(
+    params: {
+      tenantId: string;
+      storeId: string;
+      productVariantId: string;
+      quantity: number; // signed
+      lotNumber?: string;
+      expiryDate?: Date;
+      locationId?: string;
+    },
+    manager?: EntityManager,
+  ): Promise<void> {
+    const repo = manager
+      ? manager.getRepository(StockBalance)
+      : this.stockBalanceRepo;
+
+    // Mevcut satırı bul (lot + location kombinasyonuna göre)
+    let balance = await repo.findOne({
+      where: {
+        tenantId: params.tenantId,
+        storeId: params.storeId,
+        productVariantId: params.productVariantId,
+        ...(params.lotNumber !== undefined ? { lotNumber: params.lotNumber } : { lotNumber: undefined }),
+        ...(params.locationId !== undefined ? { locationId: params.locationId } : { locationId: undefined }),
+      },
+    });
+
+    if (!balance) {
+      balance = repo.create({
+        tenantId: params.tenantId,
+        storeId: params.storeId,
+        productVariantId: params.productVariantId,
+        lotNumber: params.lotNumber,
+        expiryDate: params.expiryDate,
+        locationId: params.locationId,
+        quantity: 0,
+      });
+    }
+
+    const delta = Number(params.quantity);
+    if (!Number.isFinite(delta)) {
+      throw new BadRequestException(InventoryErrors.INVALID_QUANTITY);
+    }
+
+    balance.quantity = Number(balance.quantity) + delta;
+    await repo.save(balance);
+  }
+
+  /**
+   * Lot/lokasyon bazlı stok bakiyelerini listeler.
+   * Tenant izolasyonu zorunludur.
+   */
+  async getStockBalances(query: {
+    storeId?: string;
+    productVariantId?: string;
+    lotNumber?: string;
+    locationId?: string;
+  }): Promise<StockBalance[]> {
+    const tenantId = this.getTenantIdOrThrow();
+    const qb = this.stockBalanceRepo
+      .createQueryBuilder('sb')
+      .where('sb.tenantId = :tenantId', { tenantId })
+      .orderBy('sb.createdAt', 'ASC');
+
+    if (query.storeId) {
+      qb.andWhere('sb.storeId = :storeId', { storeId: query.storeId });
+    }
+    if (query.productVariantId) {
+      qb.andWhere('sb.productVariantId = :productVariantId', {
+        productVariantId: query.productVariantId,
+      });
+    }
+    if (query.lotNumber) {
+      qb.andWhere('sb.lotNumber = :lotNumber', { lotNumber: query.lotNumber });
+    }
+    if (query.locationId) {
+      qb.andWhere('sb.locationId = :locationId', { locationId: query.locationId });
+    }
+
+    return qb.getMany();
+  }
+
   private async ensureStoreProductVariantsScopeForStockAction(
     tenantId: string,
     storeId: string,
@@ -361,6 +450,12 @@ export class InventoryService {
       saleId?: string;
       saleLineId?: string;
       supplierId?: string;
+
+      // Lot / lokasyon / seri (Faz 2)
+      lotNumber?: string;
+      expiryDate?: Date;
+      locationId?: string;
+      serialNumber?: string;
     },
     manager?: EntityManager,
   ): Promise<InventoryMovement> {
@@ -394,6 +489,11 @@ export class InventoryService {
         saleLineId: params.saleLineId,
         supplierId: params.supplierId,
 
+        lotNumber: params.lotNumber,
+        expiryDate: params.expiryDate,
+        locationId: params.locationId,
+        serialNumber: params.serialNumber,
+
         createdById: userId,
         updatedById: userId,
       });
@@ -407,6 +507,22 @@ export class InventoryService {
         params.quantity,
         txManager,
       );
+
+      // Lot veya lokasyon bilgisi varsa granüler bakiyeyi de güncelle
+      if (params.lotNumber || params.locationId) {
+        await this.applyMovementToStockBalance(
+          {
+            tenantId: params.tenantId,
+            storeId: params.store.id,
+            productVariantId: params.variant.id,
+            quantity: params.quantity,
+            lotNumber: params.lotNumber,
+            expiryDate: params.expiryDate,
+            locationId: params.locationId,
+          },
+          txManager,
+        );
+      }
 
       return savedMovement;
     });
@@ -546,6 +662,46 @@ export class InventoryService {
     }, manager);
   }
 
+  /**
+   * Sayım düzeltmesi — signed quantity delta (+ arttır, - azalt).
+   * Warehouse count session kapatma akışında çağrılır.
+   * diff = 0 ise hareket oluşturulmaz.
+   */
+  async createCountAdjustment(
+    params: {
+      storeId: string;
+      productVariantId: string;
+      quantityDelta: number; // signed
+      reference?: string;
+      meta?: Record<string, any>;
+      lotNumber?: string;
+      locationId?: string;
+    },
+    manager?: EntityManager,
+  ): Promise<InventoryMovement | null> {
+    const delta = Number(params.quantityDelta);
+    if (!Number.isFinite(delta) || delta === 0) return null;
+
+    const tenantId = this.getTenantIdOrThrow();
+    const store = await this.getTenantStoreOrThrow(params.storeId, manager);
+    const variant = await this.getTenantVariantOrThrow(params.productVariantId, manager);
+
+    return this.createMovement(
+      {
+        tenantId,
+        store,
+        variant,
+        type: MovementType.ADJUSTMENT,
+        quantity: delta,
+        reference: params.reference,
+        meta: params.meta,
+        lotNumber: params.lotNumber,
+        locationId: params.locationId,
+      },
+      manager,
+    );
+  }
+
   // ---- Use-case: tedarik / stok girişi ----
 
   /**
@@ -587,6 +743,10 @@ export class InventoryService {
               supplierId: dto.supplierId,
               reference: dto.reference,
               meta: dto.meta,
+              lotNumber: dto.lotNumber,
+              expiryDate: dto.expiryDate,
+              locationId: dto.locationId,
+              serialNumber: dto.serialNumber,
             },
             txManager,
           ));
@@ -609,6 +769,10 @@ export class InventoryService {
           supplierId: dto.supplierId,
           reference: dto.reference,
           meta: dto.meta,
+          lotNumber: dto.lotNumber,
+          expiryDate: dto.expiryDate,
+          locationId: dto.locationId,
+          serialNumber: dto.serialNumber,
         },
         txManager,
       );
@@ -650,6 +814,10 @@ export class InventoryService {
           reference: item.reference,
           meta: item.meta,
           supplierId: item.supplierId,
+          lotNumber: item.lotNumber,
+          expiryDate: item.expiryDate ? new Date(item.expiryDate) : undefined,
+          locationId: item.locationId,
+          serialNumber: item.serialNumber,
         },
         txManager,
       );

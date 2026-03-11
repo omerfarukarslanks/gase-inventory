@@ -222,11 +222,11 @@ export class ProcurementService {
             quantity: lineDto.receivedQuantity,
             supplierId: po.supplierId,
             reference: `GR-${savedGr.id.slice(0, 8).toUpperCase()}`,
+            lotNumber: lineDto.lotNumber,
+            expiryDate: lineDto.expiryDate,
             meta: {
               purchaseOrderId: po.id,
               goodsReceiptId: savedGr.id,
-              ...(lineDto.lotNumber && { lotNumber: lineDto.lotNumber }),
-              ...(lineDto.expiryDate && { expiryDate: lineDto.expiryDate }),
             },
           },
           manager,

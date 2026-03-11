@@ -33,7 +33,10 @@
       "Bash(~/.nvm/versions/node/v22.12.0/bin/node ~/.nvm/versions/node/v22.12.0/bin/npx tsc --noEmit)",
       "Bash(export PATH=\"$HOME/.nvm/versions/node/v22.12.0/bin:$PATH\")",
       "Bash(node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''inherit'', cwd: ''/Users/omerfarukarslan/Desktop/projects/gase-inventory''}\\)\")",
-      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: ''/Users/omerfarukarslan/Desktop/projects/gase-inventory''}\\)\")"
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: ''/Users/omerfarukarslan/Desktop/projects/gase-inventory''}\\)\")",
+      "Bash(node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")",
+      "Bash(PATH=\"$HOME/.nvm/versions/node/v22.12.0/bin:$PATH\" npx tsc --noEmit)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")"
     ]
   }
 }

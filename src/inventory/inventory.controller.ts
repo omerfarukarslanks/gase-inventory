@@ -88,4 +88,21 @@ export class InventoryController {
   ) {
     return this.inventoryService.getVariantStockByStore(variantId, query);
   }
+
+  @Get('stock-balances')
+  @ApiOperation({ summary: 'Lot/lokasyon bazlı granüler stok bakiyeleri' })
+  @RequirePermission(Permissions.STOCK_LIST_READ)
+  getStockBalances(
+    @Query('storeId') storeId?: string,
+    @Query('productVariantId') productVariantId?: string,
+    @Query('lotNumber') lotNumber?: string,
+    @Query('locationId') locationId?: string,
+  ) {
+    return this.inventoryService.getStockBalances({
+      storeId,
+      productVariantId,
+      lotNumber,
+      locationId,
+    });
+  }
 }

@@ -8,9 +8,11 @@ import {
 } from 'typeorm';
 
 export enum OutboxEventStatus {
-  PENDING = 'PENDING',
-  SENT = 'SENT',
-  FAILED = 'FAILED',
+  PENDING     = 'PENDING',
+  SENT        = 'SENT',
+  FAILED      = 'FAILED',
+  /** Maksimum yeniden deneme sayısına ulaşıldı — manuel müdahale gerekir */
+  DEAD_LETTER = 'DEAD_LETTER',
 }
 
 @Entity({ name: 'outbox_events' })

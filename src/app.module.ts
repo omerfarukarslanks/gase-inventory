@@ -31,6 +31,9 @@ import { ProcurementModule } from './procurement/procurement.module';
 import { ReplenishmentModule } from './replenishment/replenishment.module';
 import { AuditLogModule } from './audit-log/audit-log.module';
 import { OutboxModule } from './outbox/outbox.module';
+import { WarehouseModule } from './warehouse/warehouse.module';
+import { TradeModule } from './trade/trade.module';
+import { IntegrationModule } from './integration/integration.module';
 import { JwtAuthGuard } from './auth/jwt.auth.guard';
 import { PermissionGuard } from './common/guards/permission.guard';
 
@@ -110,6 +113,9 @@ import { PermissionGuard } from './common/guards/permission.guard';
     ReplenishmentModule,
     AuditLogModule,
     OutboxModule,
+    WarehouseModule,
+    TradeModule,
+    IntegrationModule,
   ],
   controllers: [AppController],
   providers: [
