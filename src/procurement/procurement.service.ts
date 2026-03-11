@@ -1,0 +1,367 @@
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
+import { AppContextService } from 'src/common/context/app-context.service';
+import { InventoryService } from 'src/inventory/inventory.service';
+import { AuditLogService } from 'src/audit-log/audit-log.service';
+import { OutboxService } from 'src/outbox/outbox.service';
+import { PurchaseOrder, PurchaseOrderStatus } from './entities/purchase-order.entity';
+import { PurchaseOrderLine } from './entities/purchase-order-line.entity';
+import { GoodsReceipt } from './entities/goods-receipt.entity';
+import { GoodsReceiptLine } from './entities/goods-receipt-line.entity';
+import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { CreateGoodsReceiptDto } from './dto/create-goods-receipt.dto';
+import { ListPurchaseOrdersDto } from './dto/list-purchase-orders.dto';
+
+@Injectable()
+export class ProcurementService {
+  constructor(
+    @InjectRepository(PurchaseOrder)
+    private readonly poRepo: Repository<PurchaseOrder>,
+    @InjectRepository(PurchaseOrderLine)
+    private readonly poLineRepo: Repository<PurchaseOrderLine>,
+    @InjectRepository(GoodsReceipt)
+    private readonly grRepo: Repository<GoodsReceipt>,
+    @InjectRepository(GoodsReceiptLine)
+    private readonly grLineRepo: Repository<GoodsReceiptLine>,
+    private readonly appContext: AppContextService,
+    private readonly inventoryService: InventoryService,
+    private readonly dataSource: DataSource,
+    private readonly auditLog: AuditLogService,
+    private readonly outbox: OutboxService,
+  ) {}
+
+  // ─── Satın alma siparişi oluştur (DRAFT) ────────────────────────────────────
+
+  async createPurchaseOrder(dto: CreatePurchaseOrderDto): Promise<PurchaseOrder> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const actorId = this.appContext.getUserIdOrNull();
+
+    return this.dataSource.transaction(async (manager) => {
+      const poRepo = manager.getRepository(PurchaseOrder);
+      const poLineRepo = manager.getRepository(PurchaseOrderLine);
+
+      const po = poRepo.create({
+        tenant: { id: tenantId } as any,
+        store: { id: dto.storeId } as any,
+        supplierId: dto.supplierId,
+        status: PurchaseOrderStatus.DRAFT,
+        notes: dto.notes,
+        expectedAt: dto.expectedAt ? new Date(dto.expectedAt) : undefined,
+        currency: dto.currency ?? 'TRY',
+        createdById: actorId,
+        updatedById: actorId,
+      });
+      const savedPo = await poRepo.save(po);
+
+      const lines = dto.lines.map((lineDto) => {
+        const lineTotal =
+          lineDto.unitPrice != null ? lineDto.unitPrice * lineDto.quantity : undefined;
+
+        return poLineRepo.create({
+          purchaseOrder: savedPo,
+          productVariantId: lineDto.productVariantId,
+          quantity: lineDto.quantity,
+          receivedQuantity: 0,
+          unitPrice: lineDto.unitPrice,
+          taxPercent: lineDto.taxPercent,
+          lineTotal,
+          notes: lineDto.notes,
+          createdById: actorId,
+          updatedById: actorId,
+        });
+      });
+
+      await poLineRepo.save(lines);
+      return this.findPurchaseOrderOrThrow(savedPo.id, tenantId, manager);
+    });
+  }
+
+  // ─── Sipariş onayla (DRAFT → APPROVED) ─────────────────────────────────────
+
+  async approvePurchaseOrder(poId: string): Promise<PurchaseOrder> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const actorId = this.appContext.getUserIdOrNull();
+
+    return this.dataSource.transaction(async (manager) => {
+      const po = await this.findPurchaseOrderOrThrow(poId, tenantId, manager);
+
+      if (po.status !== PurchaseOrderStatus.DRAFT) {
+        throw new BadRequestException(
+          `Sipariş onaylanamaz: mevcut durum ${po.status}. Yalnızca DRAFT siparişler onaylanabilir.`,
+        );
+      }
+
+      const prevStatus = po.status;
+      po.status = PurchaseOrderStatus.APPROVED;
+      po.updatedById = actorId;
+      const saved = await manager.getRepository(PurchaseOrder).save(po);
+
+      await this.auditLog.log(
+        {
+          action: 'PO_APPROVED',
+          entityType: 'PurchaseOrder',
+          entityId: po.id,
+          diff: { from: prevStatus, to: PurchaseOrderStatus.APPROVED },
+        },
+        manager,
+      );
+
+      return saved;
+    });
+  }
+
+  // ─── Sipariş iptal et (DRAFT veya APPROVED → CANCELLED) ────────────────────
+
+  async cancelPurchaseOrder(poId: string): Promise<PurchaseOrder> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const actorId = this.appContext.getUserIdOrNull();
+
+    return this.dataSource.transaction(async (manager) => {
+      const po = await this.findPurchaseOrderOrThrow(poId, tenantId, manager);
+
+      if (
+        po.status !== PurchaseOrderStatus.DRAFT &&
+        po.status !== PurchaseOrderStatus.APPROVED
+      ) {
+        throw new BadRequestException(
+          `Sipariş iptal edilemez: mevcut durum ${po.status}.`,
+        );
+      }
+
+      const prevStatus = po.status;
+      po.status = PurchaseOrderStatus.CANCELLED;
+      po.updatedById = actorId;
+      const saved = await manager.getRepository(PurchaseOrder).save(po);
+
+      await this.auditLog.log(
+        {
+          action: 'PO_CANCELLED',
+          entityType: 'PurchaseOrder',
+          entityId: po.id,
+          diff: { from: prevStatus, to: PurchaseOrderStatus.CANCELLED },
+        },
+        manager,
+      );
+
+      return saved;
+    });
+  }
+
+  // ─── Mal teslim al ──────────────────────────────────────────────────────────
+
+  async createGoodsReceipt(poId: string, dto: CreateGoodsReceiptDto): Promise<GoodsReceipt> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const actorId = this.appContext.getUserIdOrNull();
+
+    return this.dataSource.transaction(async (manager) => {
+      const po = await this.findPurchaseOrderOrThrow(poId, tenantId, manager);
+
+      if (
+        po.status !== PurchaseOrderStatus.APPROVED &&
+        po.status !== PurchaseOrderStatus.PARTIALLY_RECEIVED
+      ) {
+        throw new BadRequestException(
+          `Teslim alma yapılamaz: sipariş durumu ${po.status}. APPROVED veya PARTIALLY_RECEIVED olmalıdır.`,
+        );
+      }
+
+      const poLineRepo = manager.getRepository(PurchaseOrderLine);
+      const grRepo = manager.getRepository(GoodsReceipt);
+      const grLineRepo = manager.getRepository(GoodsReceiptLine);
+
+      // GoodsReceipt kaydet
+      const gr = grRepo.create({
+        tenant: { id: tenantId } as any,
+        purchaseOrder: po,
+        store: po.store,
+        notes: dto.notes,
+        createdById: actorId,
+        updatedById: actorId,
+      });
+      const savedGr = await grRepo.save(gr);
+
+      for (const lineDto of dto.lines) {
+        // PO satırını bul
+        const poLine = po.lines.find((l) => l.id === lineDto.purchaseOrderLineId);
+        if (!poLine) {
+          throw new NotFoundException(
+            `PO kalemi bulunamadı: ${lineDto.purchaseOrderLineId}`,
+          );
+        }
+
+        // Miktar kontrolü
+        const remaining = Number(poLine.quantity) - Number(poLine.receivedQuantity);
+        if (lineDto.receivedQuantity > remaining) {
+          throw new BadRequestException(
+            `Kalem ${poLine.id}: teslim alınmak istenen miktar (${lineDto.receivedQuantity}) kalan miktarı (${remaining}) aşıyor.`,
+          );
+        }
+
+        // GoodsReceiptLine kaydet
+        const grLine = grLineRepo.create({
+          goodsReceipt: savedGr,
+          purchaseOrderLine: poLine,
+          receivedQuantity: lineDto.receivedQuantity,
+          lotNumber: lineDto.lotNumber,
+          expiryDate: lineDto.expiryDate ? new Date(lineDto.expiryDate) : undefined,
+          createdById: actorId,
+          updatedById: actorId,
+        });
+        await grLineRepo.save(grLine);
+
+        // Stok girişi — aynı transaction'a katıl
+        await this.inventoryService.receiveStock(
+          {
+            storeId: (po.store as any).id,
+            productVariantId: poLine.productVariantId,
+            quantity: lineDto.receivedQuantity,
+            supplierId: po.supplierId,
+            reference: `GR-${savedGr.id.slice(0, 8).toUpperCase()}`,
+            meta: {
+              purchaseOrderId: po.id,
+              goodsReceiptId: savedGr.id,
+              ...(lineDto.lotNumber && { lotNumber: lineDto.lotNumber }),
+              ...(lineDto.expiryDate && { expiryDate: lineDto.expiryDate }),
+            },
+          },
+          manager,
+        );
+
+        // PO satırı alınan miktarı güncelle
+        poLine.receivedQuantity = Number(poLine.receivedQuantity) + lineDto.receivedQuantity;
+        poLine.updatedById = actorId;
+        await poLineRepo.save(poLine);
+      }
+
+      // PO durumunu güncelle
+      const allReceived = po.lines.every(
+        (l) => Number(l.receivedQuantity) >= Number(l.quantity),
+      );
+      po.status = allReceived
+        ? PurchaseOrderStatus.RECEIVED
+        : PurchaseOrderStatus.PARTIALLY_RECEIVED;
+      po.updatedById = actorId;
+      await manager.getRepository(PurchaseOrder).save(po);
+
+      await this.auditLog.log(
+        {
+          action: 'PO_RECEIPT_CREATED',
+          entityType: 'GoodsReceipt',
+          entityId: savedGr.id,
+          diff: { purchaseOrderId: po.id, newPoStatus: po.status },
+        },
+        manager,
+      );
+
+      // Outbox event — aynı transaction'da commit edilir
+      await this.outbox.publish(
+        {
+          tenantId,
+          eventType: 'goods_receipt.created',
+          payload: {
+            goodsReceiptId: savedGr.id,
+            purchaseOrderId: po.id,
+            storeId: (po.store as any).id,
+            newPoStatus: po.status,
+          },
+        },
+        manager,
+      );
+
+      return grRepo.findOne({
+        where: { id: savedGr.id },
+        relations: ['lines', 'lines.purchaseOrderLine', 'store'],
+      }) as Promise<GoodsReceipt>;
+    });
+  }
+
+  // ─── Listele ────────────────────────────────────────────────────────────────
+
+  async listPurchaseOrders(query: ListPurchaseOrdersDto) {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+
+    const qb = this.poRepo
+      .createQueryBuilder('po')
+      .leftJoinAndSelect('po.store', 'store')
+      .leftJoinAndSelect('po.lines', 'lines')
+      .where('po.tenantId = :tenantId', { tenantId });
+
+    if (query.status) {
+      qb.andWhere('po.status = :status', { status: query.status });
+    }
+    if (query.storeId) {
+      qb.andWhere('po.storeId = :storeId', { storeId: query.storeId });
+    }
+    if (query.supplierId) {
+      qb.andWhere('po.supplierId = :supplierId', { supplierId: query.supplierId });
+    }
+
+    qb.orderBy('po.createdAt', 'DESC');
+
+    if (!query.hasPagination) {
+      const data = await qb.getMany();
+      return { data };
+    }
+
+    const total = await qb.getCount();
+    const data = await qb.skip(query.skip).take(query.limit ?? 20).getMany();
+
+    return {
+      data,
+      meta: {
+        total,
+        page: query.page ?? 1,
+        limit: query.limit ?? 20,
+        totalPages: Math.ceil(total / (query.limit ?? 20)),
+      },
+    };
+  }
+
+  // ─── Tekil PO ───────────────────────────────────────────────────────────────
+
+  async getPurchaseOrder(poId: string): Promise<PurchaseOrder> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    return this.findPurchaseOrderOrThrow(poId, tenantId);
+  }
+
+  // ─── Goods receipt listesi ──────────────────────────────────────────────────
+
+  async listGoodsReceipts(poId: string): Promise<GoodsReceipt[]> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    await this.findPurchaseOrderOrThrow(poId, tenantId);
+
+    return this.grRepo.find({
+      where: { purchaseOrder: { id: poId }, tenant: { id: tenantId } },
+      relations: ['lines', 'lines.purchaseOrderLine', 'store'],
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  // ─── Internal ───────────────────────────────────────────────────────────────
+
+  private async findPurchaseOrderOrThrow(
+    poId: string,
+    tenantId: string,
+    manager?: EntityManager,
+  ): Promise<PurchaseOrder> {
+    const repo = manager
+      ? manager.getRepository(PurchaseOrder)
+      : this.poRepo;
+
+    const po = await repo.findOne({
+      where: { id: poId, tenant: { id: tenantId } },
+      relations: ['store', 'lines', 'goodsReceipts'],
+    });
+
+    if (!po) {
+      throw new NotFoundException('Satın alma siparişi bulunamadı');
+    }
+
+    return po;
+  }
+}

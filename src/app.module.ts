@@ -27,6 +27,10 @@ import { ExchangeRateModule } from './exchange-rate/exchange-rate.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { ProductPackageModule } from './product-package/product-package.module';
 import { PermissionModule } from './permission/permission.module';
+import { ProcurementModule } from './procurement/procurement.module';
+import { ReplenishmentModule } from './replenishment/replenishment.module';
+import { AuditLogModule } from './audit-log/audit-log.module';
+import { OutboxModule } from './outbox/outbox.module';
 import { JwtAuthGuard } from './auth/jwt.auth.guard';
 import { PermissionGuard } from './common/guards/permission.guard';
 
@@ -102,6 +106,10 @@ import { PermissionGuard } from './common/guards/permission.guard';
     ExchangeRateModule,
     ProductPackageModule,
     PermissionModule,
+    ProcurementModule,
+    ReplenishmentModule,
+    AuditLogModule,
+    OutboxModule,
   ],
   controllers: [AppController],
   providers: [

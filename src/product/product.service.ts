@@ -1403,11 +1403,15 @@ export class ProductService {
     return repo.save(variant);
   }
 
-  async lookupByBarcode(barcode: string): Promise<ProductVariant> {
+  async lookupByBarcode(
+    barcode: string,
+  ): Promise<ProductVariant & { stock?: { quantity: number; storeId: string } }> {
     if (!barcode) {
       throw new BadRequestException('barcode query param zorunludur');
     }
     const tenantId = this.appContext.getTenantIdOrThrow();
+    const storeId = this.appContext.getStoreId();
+
     const repo = this.getVariantRepo();
     const variant = await repo
       .createQueryBuilder('v')
@@ -1419,6 +1423,20 @@ export class ProductService {
     if (!variant) {
       throw new NotFoundException(ProductErrors.VARIANT_NOT_FOUND);
     }
+
+    if (storeId) {
+      const stockRow = await this.getStoreVariantStockRepo().findOne({
+        where: {
+          tenant: { id: tenantId },
+          store: { id: storeId },
+          productVariant: { id: variant.id },
+        },
+      });
+      return Object.assign(variant, {
+        stock: { quantity: stockRow ? Number(stockRow.quantity) : 0, storeId },
+      });
+    }
+
     return variant;
   }
 

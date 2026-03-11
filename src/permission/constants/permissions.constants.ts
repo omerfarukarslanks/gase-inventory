@@ -87,10 +87,26 @@ export const Permissions = {
   REPORT_CUSTOMER_READ:  'REPORT_CUSTOMER_READ',
   REPORT_INVENTORY_READ: 'REPORT_INVENTORY_READ',
 
+  // ─── Satın Alma ─────────────────────────────────────
+  PO_CREATE:          'PO_CREATE',
+  PO_READ:            'PO_READ',
+  PO_APPROVE:         'PO_APPROVE',
+  PO_CANCEL:          'PO_CANCEL',
+  PO_RECEIPT_CREATE:  'PO_RECEIPT_CREATE',
+
+  // ─── İkmal (Replenishment) ───────────────────────────
+  REPLENISHMENT_RULE_MANAGE: 'REPLENISHMENT_RULE_MANAGE',
+  REPLENISHMENT_READ:        'REPLENISHMENT_READ',
+  REPLENISHMENT_ACCEPT:      'REPLENISHMENT_ACCEPT',
+  REPLENISHMENT_DISMISS:     'REPLENISHMENT_DISMISS',
+
+  AUDIT_LOG_READ: 'AUDIT_LOG_READ',
+
   // ─── Sistem ─────────────────────────────────────────
-  EXCHANGE_RATE_READ: 'EXCHANGE_RATE_READ',
-  AI_CHAT:            'AI_CHAT',
-  PERMISSION_MANAGE:  'PERMISSION_MANAGE',
+  EXCHANGE_RATE_READ:   'EXCHANGE_RATE_READ',
+  EXCHANGE_RATE_MANAGE: 'EXCHANGE_RATE_MANAGE',
+  AI_CHAT:              'AI_CHAT',
+  PERMISSION_MANAGE:    'PERMISSION_MANAGE',
 } as const;
 
 export type PermissionName = (typeof Permissions)[keyof typeof Permissions];
@@ -174,7 +190,21 @@ export const PERMISSION_META: Record<
   REPORT_CUSTOMER_READ:  { group: 'Raporlar', description: 'Müşteri raporlarını görüntüleme' },
   REPORT_INVENTORY_READ: { group: 'Raporlar', description: 'Envanter/stok analiz raporları' },
 
-  EXCHANGE_RATE_READ: { group: 'Sistem', description: 'Döviz kurlarını görüntüleme' },
+  PO_CREATE:         { group: 'Satın Alma', description: 'Satın alma siparişi oluşturma' },
+  PO_READ:           { group: 'Satın Alma', description: 'Satın alma siparişlerini görüntüleme' },
+  PO_APPROVE:        { group: 'Satın Alma', description: 'Satın alma siparişini onaylama' },
+  PO_CANCEL:         { group: 'Satın Alma', description: 'Satın alma siparişini iptal etme' },
+  PO_RECEIPT_CREATE: { group: 'Satın Alma', description: 'Mal teslim alma kaydı oluşturma' },
+
+  REPLENISHMENT_RULE_MANAGE: { group: 'İkmal', description: 'İkmal kuralı oluşturma/güncelleme/silme' },
+  REPLENISHMENT_READ:        { group: 'İkmal', description: 'İkmal kurallarını ve önerilerini görüntüleme' },
+  REPLENISHMENT_ACCEPT:      { group: 'İkmal', description: 'İkmal önerisini onaylama (Draft PO oluşturur)' },
+  REPLENISHMENT_DISMISS:     { group: 'İkmal', description: 'İkmal önerisini reddetme' },
+
+  AUDIT_LOG_READ: { group: 'Sistem', description: 'Audit log kayıtlarını görüntüleme' },
+
+  EXCHANGE_RATE_READ:   { group: 'Sistem', description: 'Döviz kurlarını görüntüleme' },
+  EXCHANGE_RATE_MANAGE: { group: 'Sistem', description: 'Tenant bazlı döviz kuru override yönetimi' },
   AI_CHAT:            { group: 'Sistem', description: 'AI asistan kullanımı' },
   PERMISSION_MANAGE:  { group: 'Sistem', description: 'Role-yetki haritasını yönetme' },
 };
@@ -219,6 +249,15 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.SUPPLIER_READ,
     Permissions.CUSTOMER_READ,
     Permissions.STORE_READ,
+    Permissions.PO_CREATE,
+    Permissions.PO_READ,
+    Permissions.PO_APPROVE,
+    Permissions.PO_CANCEL,
+    Permissions.PO_RECEIPT_CREATE,
+    Permissions.REPLENISHMENT_RULE_MANAGE,
+    Permissions.REPLENISHMENT_READ,
+    Permissions.REPLENISHMENT_ACCEPT,
+    Permissions.REPLENISHMENT_DISMISS,
     Permissions.REPORT_STOCK_READ,
     Permissions.REPORT_SALES_READ,
     Permissions.REPORT_EMPLOYEE_READ,
@@ -263,7 +302,9 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.REPORT_EMPLOYEE_READ,
     Permissions.REPORT_CUSTOMER_READ,
     Permissions.REPORT_INVENTORY_READ,
+    Permissions.AUDIT_LOG_READ,
     Permissions.EXCHANGE_RATE_READ,
+    Permissions.EXCHANGE_RATE_MANAGE,
     Permissions.AI_CHAT,
   ],
 
