@@ -34,6 +34,8 @@ import { OutboxModule } from './outbox/outbox.module';
 import { WarehouseModule } from './warehouse/warehouse.module';
 import { TradeModule } from './trade/trade.module';
 import { IntegrationModule } from './integration/integration.module';
+import { SyncModule } from './sync/sync.module';
+import { ApprovalModule } from './approval/approval.module';
 import { JwtAuthGuard } from './auth/jwt.auth.guard';
 import { PermissionGuard } from './common/guards/permission.guard';
 
@@ -116,6 +118,8 @@ import { PermissionGuard } from './common/guards/permission.guard';
     WarehouseModule,
     TradeModule,
     IntegrationModule,
+    SyncModule,
+    ApprovalModule,
   ],
   controllers: [AppController],
   providers: [

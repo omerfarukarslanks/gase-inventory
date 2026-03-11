@@ -36,7 +36,8 @@
       "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: ''/Users/omerfarukarslan/Desktop/projects/gase-inventory''}\\)\")",
       "Bash(node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")",
       "Bash(PATH=\"$HOME/.nvm/versions/node/v22.12.0/bin:$PATH\" npx tsc --noEmit)",
-      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")"
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"require\\(''child_process''\\).execSync\\(''npx tsc --noEmit'', {stdio: ''pipe'', cwd: process.cwd\\(\\)}\\)\")",
+      "Bash(grep -A 15 \"scope.mode === ''context-store''\" /Users/omerfarukarslan/Desktop/projects/gase-inventory/src/reports/reports.service.ts)"
     ]
   }
 }

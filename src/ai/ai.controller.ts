@@ -1,9 +1,13 @@
 import {
   Body,
   Controller,
+  Get,
+  HttpCode,
   HttpException,
   HttpStatus,
+  Param,
   Post,
+  Query,
   Res,
   UseGuards,
 } from '@nestjs/common';
@@ -12,7 +16,9 @@ import { ApiBearerAuth } from '@nestjs/swagger/dist/decorators/api-bearer.decora
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { JwtAuthGuard } from 'src/auth/jwt.auth.guard';
 import { AiService } from './ai.service';
+import { ActionAiService } from './action-ai.service';
 import { ChatRequestDto } from './dto/chat.dto';
+import { AnalyzeContextDto, ListAiSuggestionsQueryDto } from './dto/action-ai.dto';
 import { RequirePermission } from 'src/common/decorators/require-permission.decorator';
 import { PermissionGuard } from 'src/common/guards/permission.guard';
 import { Permissions } from 'src/permission/constants/permissions.constants';
@@ -22,7 +28,10 @@ import { Permissions } from 'src/permission/constants/permissions.constants';
 @Controller('ai')
 @UseGuards(JwtAuthGuard, PermissionGuard)
 export class AiController {
-  constructor(private readonly ai: AiService) {}
+  constructor(
+    private readonly ai: AiService,
+    private readonly actionAi: ActionAiService,
+  ) {}
 
   @Post('chat')
   @ApiOperation({ summary: 'Ollama LLM ile chat (SSE stream)' })
@@ -116,5 +125,58 @@ export class AiController {
   @RequirePermission(Permissions.AI_CHAT)
   async chatSync(@Body() body: ChatRequestDto) {
     return this.ai.chatOnce(body);
+  }
+
+  // ── Action AI ─────────────────────────────────────────────────────────────
+
+  @Post('actions/analyze')
+  @ApiOperation({
+    summary: 'Mevcut verileri analiz et ve eylem önerileri üret',
+    description: [
+      'Düşük stok → CREATE_PO_DRAFT önerisi',
+      'Ölü stok (60+ gündür satılmayan) → PRICE_ADJUSTMENT önerisi',
+      'Öneri insan onayı olmadan uygulanmaz.',
+    ].join('\n'),
+  })
+  @RequirePermission(Permissions.AI_CHAT)
+  analyzeAndGenerate(@Body() dto: AnalyzeContextDto) {
+    return this.actionAi.analyzeAndGenerate(dto);
+  }
+
+  @Get('actions/suggestions')
+  @ApiOperation({ summary: 'AI eylem önerilerini listele' })
+  @RequirePermission(Permissions.AI_CHAT)
+  listSuggestions(@Query() query: ListAiSuggestionsQueryDto) {
+    return this.actionAi.list(query);
+  }
+
+  @Get('actions/suggestions/:id')
+  @ApiOperation({ summary: 'AI eylem önerisi detayı' })
+  @RequirePermission(Permissions.AI_CHAT)
+  getSuggestion(@Param('id') id: string) {
+    return this.actionAi.get(id);
+  }
+
+  @Post('actions/suggestions/:id/confirm')
+  @ApiOperation({
+    summary: 'AI önerisini onayla (insan onayı zorunlu)',
+    description: [
+      'CREATE_PO_DRAFT → Draft PO oluşturulur.',
+      'PRICE_ADJUSTMENT → ApprovalRequest (L2 çift seviye) açılır.',
+      'STOCK_ADJUSTMENT → ApprovalRequest (L1 tek seviye) açılır.',
+    ].join('\n'),
+  })
+  @RequirePermission(Permissions.AI_ACTION_CONFIRM)
+  @HttpCode(HttpStatus.OK)
+  confirmSuggestion(@Param('id') id: string) {
+    return this.actionAi.confirm(id);
+  }
+
+  @Post('actions/suggestions/:id/dismiss')
+  @ApiOperation({ summary: 'AI önerisini reddet' })
+  @RequirePermission(Permissions.AI_CHAT)
+  @HttpCode(HttpStatus.OK)
+  dismissSuggestion(@Param('id') id: string) {
+    return this.actionAi.dismiss(id);
   }
 }

@@ -113,9 +113,18 @@ export const Permissions = {
   COUNT_SESSION_READ:   'COUNT_SESSION_READ',
   COUNT_SESSION_ADJUST: 'COUNT_SESSION_ADJUST',
 
+  // ─── Onay Akışı (Approval) ───────────────────────────
+  APPROVAL_READ:      'APPROVAL_READ',
+  APPROVAL_REQUEST:   'APPROVAL_REQUEST',
+  APPROVAL_REVIEW:    'APPROVAL_REVIEW',
+  APPROVAL_REVIEW_L2: 'APPROVAL_REVIEW_L2',
+
   // ─── Entegrasyon ────────────────────────────────────
   INTEGRATION_READ:   'INTEGRATION_READ',
   INTEGRATION_MANAGE: 'INTEGRATION_MANAGE',
+
+  // ─── AI Aksiyonlar ───────────────────────────────────
+  AI_ACTION_CONFIRM: 'AI_ACTION_CONFIRM',
 
   // ─── Sistem ─────────────────────────────────────────
   EXCHANGE_RATE_READ:   'EXCHANGE_RATE_READ',
@@ -227,8 +236,15 @@ export const PERMISSION_META: Record<
   COUNT_SESSION_READ:   { group: 'Depo', description: 'Sayım oturumlarını görüntüleme' },
   COUNT_SESSION_ADJUST: { group: 'Depo', description: 'Sayım oturumunu kapatma ve stok düzeltme uygulama' },
 
+  APPROVAL_READ:      { group: 'Onay', description: 'Onay taleplerini görüntüleme' },
+  APPROVAL_REQUEST:   { group: 'Onay', description: 'Onay talebi oluşturma ve geri çekme' },
+  APPROVAL_REVIEW:    { group: 'Onay', description: 'L1 onay/red (stok düzeltme, fiyat override)' },
+  APPROVAL_REVIEW_L2: { group: 'Onay', description: 'L2 onay/red — Admin/Owner (fiyat override ikinci seviye)' },
+
   INTEGRATION_READ:   { group: 'Entegrasyon', description: 'Entegrasyon bağlantılarını görüntüleme' },
   INTEGRATION_MANAGE: { group: 'Entegrasyon', description: 'Entegrasyon bağlantısı oluşturma/güncelleme/silme ve DLQ yönetimi' },
+
+  AI_ACTION_CONFIRM: { group: 'AI', description: 'AI eylem önerilerini onaylama (PO oluşturma, fiyat/stok düzeltme talebi)' },
 
   EXCHANGE_RATE_READ:   { group: 'Sistem', description: 'Döviz kurlarını görüntüleme' },
   EXCHANGE_RATE_MANAGE: { group: 'Sistem', description: 'Tenant bazlı döviz kuru override yönetimi' },
@@ -290,7 +306,11 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.COUNT_SESSION_READ,
     Permissions.COUNT_SESSION_ADJUST,
     Permissions.TRADE_READ,
+    Permissions.APPROVAL_READ,
+    Permissions.APPROVAL_REQUEST,
+    Permissions.APPROVAL_REVIEW,
     Permissions.INTEGRATION_READ,
+    Permissions.AI_ACTION_CONFIRM,
     Permissions.REPORT_STOCK_READ,
     Permissions.REPORT_SALES_READ,
     Permissions.REPORT_EMPLOYEE_READ,
@@ -343,8 +363,13 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<UserRole, PermissionName[]> = {
     Permissions.REPORT_CUSTOMER_READ,
     Permissions.REPORT_INVENTORY_READ,
     Permissions.AUDIT_LOG_READ,
+    Permissions.APPROVAL_READ,
+    Permissions.APPROVAL_REQUEST,
+    Permissions.APPROVAL_REVIEW,
+    Permissions.APPROVAL_REVIEW_L2,
     Permissions.INTEGRATION_READ,
     Permissions.INTEGRATION_MANAGE,
+    Permissions.AI_ACTION_CONFIRM,
     Permissions.EXCHANGE_RATE_READ,
     Permissions.EXCHANGE_RATE_MANAGE,
     Permissions.AI_CHAT,
