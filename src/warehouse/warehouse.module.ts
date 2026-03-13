@@ -10,6 +10,8 @@ import { PickingTask } from './entities/picking-task.entity';
 import { WarehouseService } from './warehouse.service';
 import { WarehouseController } from './warehouse.controller';
 import { InventoryModule } from 'src/inventory/inventory.module';
+import { Store } from 'src/store/store.entity';
+import { ProductVariant } from 'src/product/product-variant.entity';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { InventoryModule } from 'src/inventory/inventory.module';
       PutawayTask,
       Wave,
       PickingTask,
+      Store,
+      ProductVariant,
     ]),
     InventoryModule,
   ],

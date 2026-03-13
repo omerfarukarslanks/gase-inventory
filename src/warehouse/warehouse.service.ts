@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, In, Repository } from 'typeorm';
 import { Warehouse } from './entities/warehouse.entity';
 import { Location, LocationType } from './entities/location.entity';
 import {
@@ -17,6 +17,8 @@ import { Wave, WaveStatus } from './entities/wave.entity';
 import { PickingTask, PickingTaskStatus } from './entities/picking-task.entity';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { InventoryService } from 'src/inventory/inventory.service';
+import { Store } from 'src/store/store.entity';
+import { ProductVariant } from 'src/product/product-variant.entity';
 import {
   AddCountLineDto,
   AssignPickingTaskDto,
@@ -33,11 +35,31 @@ import {
   UpdateWarehouseDto,
 } from './dto/warehouse.dto';
 
+type VariantDetails = {
+  productName: string | null;
+  variantName: string | null;
+};
+
+type CountSessionLineResponse = Omit<CountLine, 'difference'> & VariantDetails & {
+  difference: number | null;
+  locationName: string | null;
+};
+
+type CountSessionResponse = Omit<CountSession, 'lines'> & {
+  storeName: string | null;
+  warehouseName: string | null;
+  lines?: CountSessionLineResponse[];
+};
+
 @Injectable()
 export class WarehouseService {
   constructor(
     @InjectRepository(Warehouse)
     private readonly warehouseRepo: Repository<Warehouse>,
+    @InjectRepository(Store)
+    private readonly storeRepo: Repository<Store>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepo: Repository<ProductVariant>,
     @InjectRepository(Location)
     private readonly locationRepo: Repository<Location>,
     @InjectRepository(CountSession)
@@ -91,6 +113,166 @@ export class WarehouseService {
     });
     if (!session) throw new NotFoundException(`Sayım oturumu bulunamadı: ${id}`);
     return session;
+  }
+
+  private async enrichCountSessions(
+    sessions: CountSession[],
+  ): Promise<CountSessionResponse[]> {
+    if (sessions.length === 0) {
+      return [];
+    }
+
+    const tenantId = this.getTenantId();
+    const storeIds = [...new Set(sessions.map((session) => session.storeId).filter(Boolean))];
+    const warehouseIds = [
+      ...new Set(
+        sessions
+          .map((session) => session.warehouseId)
+          .filter((warehouseId): warehouseId is string => Boolean(warehouseId)),
+      ),
+    ];
+    const variantIds = [
+      ...new Set(
+        sessions.flatMap((session) =>
+          (session.lines ?? [])
+            .map((line) => line.productVariantId)
+            .filter((variantId): variantId is string => Boolean(variantId)),
+        ),
+      ),
+    ];
+    const locationIds = [
+      ...new Set(
+        sessions.flatMap((session) =>
+          (session.lines ?? [])
+            .map((line) => line.locationId)
+            .filter((locationId): locationId is string => Boolean(locationId)),
+        ),
+      ),
+    ];
+
+    const [stores, warehouses, variantById, locations] = await Promise.all([
+      storeIds.length
+        ? this.storeRepo.find({
+            where: { id: In(storeIds), tenant: { id: tenantId } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      warehouseIds.length
+        ? this.warehouseRepo.find({
+            where: { id: In(warehouseIds), tenant: { id: tenantId } },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
+      this.loadVariantDetailsMap(variantIds),
+      locationIds.length
+        ? this.locationRepo.find({
+            where: { id: In(locationIds), tenant: { id: tenantId } },
+            select: { id: true, name: true, code: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const storeNameById = new Map(stores.map((store) => [store.id, store.name]));
+    const warehouseNameById = new Map(warehouses.map((warehouse) => [warehouse.id, warehouse.name]));
+    const locationNameById = new Map(
+      locations.map((location) => [
+        location.id,
+        location.name ?? location.code ?? null,
+      ]),
+    );
+
+    return sessions.map((session) => ({
+      ...session,
+      storeName: storeNameById.get(session.storeId) ?? null,
+      warehouseName: session.warehouseId
+        ? warehouseNameById.get(session.warehouseId) ?? null
+        : null,
+      lines: session.lines?.map((line) => {
+        const variantDetails = variantById.get(line.productVariantId);
+
+        return {
+          ...line,
+          difference: this.getCountLineDifferenceValue(
+            line.expectedQuantity,
+            line.countedQuantity,
+            line.difference,
+          ),
+          productName: variantDetails?.productName ?? null,
+          variantName: variantDetails?.variantName ?? null,
+          locationName: line.locationId
+            ? locationNameById.get(line.locationId) ?? null
+            : null,
+        };
+      }),
+    }));
+  }
+
+  private async enrichCountSession(session: CountSession): Promise<CountSessionResponse> {
+    const [enrichedSession] = await this.enrichCountSessions([session]);
+    return enrichedSession;
+  }
+
+  private async loadVariantDetailsMap(
+    variantIds: string[],
+  ): Promise<Map<string, VariantDetails>> {
+    if (variantIds.length === 0) {
+      return new Map<string, VariantDetails>();
+    }
+
+    const variants = await this.productVariantRepo.find({
+      where: { id: In(variantIds) },
+      relations: ['product'],
+    });
+
+    return new Map(
+      variants.map((variant) => [
+        variant.id,
+        {
+          productName: variant.product?.name ?? null,
+          variantName: variant.name ?? null,
+        },
+      ]),
+    );
+  }
+
+  private calculateCountLineDifference(
+    expectedQuantity: number | string | null | undefined,
+    countedQuantity: number | string | null | undefined,
+    persistedDifference?: number | string | null,
+  ): number | undefined {
+    const expected = this.toNullableNumber(expectedQuantity);
+    const counted = this.toNullableNumber(countedQuantity);
+
+    if (expected !== null && counted !== null) {
+      return counted - expected;
+    }
+
+    return this.toNullableNumber(persistedDifference) ?? undefined;
+  }
+
+  private getCountLineDifferenceValue(
+    expectedQuantity: number | string | null | undefined,
+    countedQuantity: number | string | null | undefined,
+    persistedDifference?: number | string | null,
+  ): number | null {
+    return (
+      this.calculateCountLineDifference(
+        expectedQuantity,
+        countedQuantity,
+        persistedDifference,
+      ) ?? null
+    );
+  }
+
+  private toNullableNumber(
+    value: number | string | null | undefined,
+  ): number | null {
+    if (value === null || value === undefined || value === '') {
+      return null;
+    }
+
+    const numericValue = Number(value);
+    return Number.isFinite(numericValue) ? numericValue : null;
   }
 
   // ---- Warehouse CRUD ----
@@ -201,7 +383,7 @@ export class WarehouseService {
     return this.sessionRepo.save(session);
   }
 
-  async listCountSessions(storeId?: string): Promise<CountSession[]> {
+  async listCountSessions(storeId?: string): Promise<CountSessionResponse[]> {
     const tenantId = this.getTenantId();
     const qb = this.sessionRepo
       .createQueryBuilder('cs')
@@ -212,11 +394,13 @@ export class WarehouseService {
       qb.andWhere('cs.storeId = :storeId', { storeId });
     }
 
-    return qb.getMany();
+    const sessions = await qb.getMany();
+    return this.enrichCountSessions(sessions);
   }
 
-  async getCountSession(id: string): Promise<CountSession> {
-    return this.findSessionOrThrow(id);
+  async getCountSession(id: string): Promise<CountSessionResponse> {
+    const session = await this.findSessionOrThrow(id);
+    return this.enrichCountSession(session);
   }
 
   async addCountLine(sessionId: string, dto: AddCountLineDto): Promise<CountLine> {
@@ -240,6 +424,10 @@ export class WarehouseService {
       locationId: dto.locationId,
       expectedQuantity: dto.expectedQuantity,
       countedQuantity: dto.countedQuantity,
+      difference: this.calculateCountLineDifference(
+        dto.expectedQuantity,
+        dto.countedQuantity,
+      ),
       isAdjusted: false,
       createdById: userId,
       updatedById: userId,
@@ -263,6 +451,11 @@ export class WarehouseService {
     if (!line) throw new NotFoundException(`Sayım satırı bulunamadı: ${lineId}`);
 
     line.countedQuantity = dto.countedQuantity;
+    line.difference = this.calculateCountLineDifference(
+      line.expectedQuantity,
+      dto.countedQuantity,
+      line.difference,
+    );
     line.updatedById = this.getUserId();
     return this.lineRepo.save(line);
   }
@@ -286,9 +479,11 @@ export class WarehouseService {
 
     return this.dataSource.transaction(async (manager) => {
       for (const line of unadjustedLines) {
-        const counted = Number(line.countedQuantity);
-        const expected = Number(line.expectedQuantity);
-        const diff = counted - expected;
+        const diff = this.calculateCountLineDifference(
+          line.expectedQuantity,
+          line.countedQuantity,
+          line.difference,
+        ) ?? 0;
 
         line.difference = diff;
 
