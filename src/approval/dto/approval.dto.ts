@@ -4,7 +4,6 @@ import {
   IsObject,
   IsOptional,
   IsString,
-  IsUUID,
 } from 'class-validator';
 import { ApprovalEntityType, ApprovalStatus } from '../entities/approval-request.entity';
 
@@ -24,17 +23,32 @@ export interface PriceOverrideRequestData {
   taxPercent?: number;
 }
 
+export interface PurchaseOrderRequestData {
+  purchaseOrderId: string;
+  totalAmount?: number;
+  currency?: string;
+  supplierId?: string;
+}
+
+export interface SaleReturnRequestData {
+  saleReturnId: string;
+  saleId?: string;
+  totalRefundAmount?: number;
+  lines?: Record<string, any>[];
+}
+
+export interface CountAdjustmentRequestData {
+  countSessionId: string;
+  storeId: string;
+  lines: Record<string, any>[];
+}
+
 // ── DTOs ──────────────────────────────────────────────────────────────────────
 
 export class CreateApprovalRequestDto {
   @ApiProperty({ enum: ApprovalEntityType })
   @IsEnum(ApprovalEntityType)
   entityType: ApprovalEntityType;
-
-  @ApiPropertyOptional({ description: 'Güncellenmek istenen entity UUID (varsa)' })
-  @IsOptional()
-  @IsUUID('4')
-  entityId?: string;
 
   @ApiProperty({ description: 'İşlemi uygulamak için gerekli parametreler (JSON)' })
   @IsObject()

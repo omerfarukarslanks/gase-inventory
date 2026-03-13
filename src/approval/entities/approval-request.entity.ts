@@ -54,6 +54,7 @@ export enum ApprovalStatus {
 @Entity({ name: 'approval_requests' })
 @Index('idx_approval_tenant_status', ['tenantId', 'status'])
 @Index('idx_approval_requested_by', ['tenantId', 'requestedById'])
+@Index('idx_approval_tenant_dedupe_status', ['tenantId', 'dedupeKey', 'status'])
 export class ApprovalRequest {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -68,6 +69,14 @@ export class ApprovalRequest {
   /** Güncelleme yapılacak mevcut entity UUID'si (opsiyonel) */
   @Column({ type: 'uuid', nullable: true })
   entityId?: string;
+
+  /**
+   * Stable dedupe anahtari.
+   * - Entity tabanli approval'larda: `${entityType}:${entityId}`
+   * - Entity olmayan action request'lerde: server-side hesaplanan subject key
+   */
+  @Column({ length: 255, nullable: true })
+  dedupeKey?: string;
 
   @Column({ type: 'enum', enum: ApprovalStatus, default: ApprovalStatus.PENDING_L1 })
   status: ApprovalStatus;

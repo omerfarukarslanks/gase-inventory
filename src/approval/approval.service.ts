@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { InventoryService } from 'src/inventory/inventory.service';
 import { AdjustStockDto } from 'src/inventory/dto/adjust-stock.dto';
@@ -17,10 +17,13 @@ import {
   ApprovalStatus,
 } from './entities/approval-request.entity';
 import {
+  CountAdjustmentRequestData,
   CreateApprovalRequestDto,
   ListApprovalQueryDto,
   PriceOverrideRequestData,
+  PurchaseOrderRequestData,
   ReviewApprovalDto,
+  SaleReturnRequestData,
   StockAdjustmentRequestData,
 } from './dto/approval.dto';
 
@@ -59,28 +62,26 @@ export class ApprovalService {
 
   async create(dto: CreateApprovalRequestDto): Promise<ApprovalRequest> {
     const tenantId = this.tenantId();
+    const { entityId, dedupeKey } = this.resolveApprovalTarget(dto);
 
-    // Aynı entity için zaten bekleyen talep var mı?
-    if (dto.entityId) {
-      const existing = await this.repo.findOne({
-        where: {
-          tenantId,
-          entityId: dto.entityId,
-          entityType: dto.entityType,
-          status: ApprovalStatus.PENDING_L1,
-        },
-      });
-      if (existing) {
-        throw new BadRequestException(
-          `Bu kayıt için zaten bekleyen bir onay talebi mevcut: ${existing.id}`,
-        );
-      }
+    const existing = await this.repo.findOne({
+      where: {
+        tenantId,
+        dedupeKey,
+        status: In([ApprovalStatus.PENDING_L1, ApprovalStatus.PENDING_L2]),
+      },
+    });
+    if (existing) {
+      throw new BadRequestException(
+        `Bu kayıt için zaten bekleyen bir onay talebi mevcut: ${existing.id}`,
+      );
     }
 
     const approval = this.repo.create({
       tenantId,
       entityType: dto.entityType,
-      entityId: dto.entityId,
+      entityId,
+      dedupeKey,
       requestData: dto.requestData,
       requesterNotes: dto.requesterNotes,
       requestedById: this.userId(),
@@ -89,6 +90,92 @@ export class ApprovalService {
     });
 
     return this.repo.save(approval);
+  }
+
+  private resolveApprovalTarget(
+    dto: CreateApprovalRequestDto,
+  ): { entityId?: string; dedupeKey: string } {
+    switch (dto.entityType) {
+      case ApprovalEntityType.STOCK_ADJUSTMENT: {
+        const data = dto.requestData as StockAdjustmentRequestData;
+        const storeId = this.requireRequestField(data?.storeId, 'storeId', dto.entityType);
+        const productVariantId = this.requireRequestField(
+          data?.productVariantId,
+          'productVariantId',
+          dto.entityType,
+        );
+        return {
+          dedupeKey: `${dto.entityType}:${storeId}:${productVariantId}`,
+        };
+      }
+
+      case ApprovalEntityType.PRICE_OVERRIDE: {
+        const data = dto.requestData as PriceOverrideRequestData;
+        const storeId = this.requireRequestField(data?.storeId, 'storeId', dto.entityType);
+        const productVariantId = this.requireRequestField(
+          data?.productVariantId,
+          'productVariantId',
+          dto.entityType,
+        );
+        return {
+          dedupeKey: `${dto.entityType}:${storeId}:${productVariantId}`,
+        };
+      }
+
+      case ApprovalEntityType.PURCHASE_ORDER: {
+        const data = dto.requestData as PurchaseOrderRequestData;
+        const purchaseOrderId = this.requireRequestField(
+          data?.purchaseOrderId,
+          'purchaseOrderId',
+          dto.entityType,
+        );
+        return {
+          entityId: purchaseOrderId,
+          dedupeKey: `${dto.entityType}:${purchaseOrderId}`,
+        };
+      }
+
+      case ApprovalEntityType.SALE_RETURN: {
+        const data = dto.requestData as SaleReturnRequestData;
+        const saleReturnId = this.requireRequestField(
+          data?.saleReturnId,
+          'saleReturnId',
+          dto.entityType,
+        );
+        return {
+          entityId: saleReturnId,
+          dedupeKey: `${dto.entityType}:${saleReturnId}`,
+        };
+      }
+
+      case ApprovalEntityType.COUNT_ADJUSTMENT: {
+        const data = dto.requestData as CountAdjustmentRequestData;
+        const countSessionId = this.requireRequestField(
+          data?.countSessionId,
+          'countSessionId',
+          dto.entityType,
+        );
+        return {
+          entityId: countSessionId,
+          dedupeKey: `${dto.entityType}:${countSessionId}`,
+        };
+      }
+    }
+
+    throw new BadRequestException(`Desteklenmeyen approval entityType: ${dto.entityType}`);
+  }
+
+  private requireRequestField(
+    value: string | undefined,
+    fieldName: string,
+    entityType: ApprovalEntityType,
+  ): string {
+    if (!value?.trim()) {
+      throw new BadRequestException(
+        `${entityType} approval requestData içinde '${fieldName}' zorunludur.`,
+      );
+    }
+    return value;
   }
 
   async list(query: ListApprovalQueryDto): Promise<ApprovalRequest[]> {
