@@ -47,6 +47,7 @@ describe('WarehouseService', () => {
   };
   let putawayRepo: {
     create: jest.Mock;
+    createQueryBuilder: jest.Mock;
     find: jest.Mock;
     findOne: jest.Mock;
     save: jest.Mock;
@@ -86,6 +87,7 @@ describe('WarehouseService', () => {
 
     putawayRepo = {
       create: jest.fn((dto: any) => dto),
+      createQueryBuilder: jest.fn(),
       find: jest.fn(),
       findOne: jest.fn(),
       save: jest.fn(async (taskOrTasks: any) => taskOrTasks),
@@ -277,6 +279,13 @@ describe('WarehouseService', () => {
         id: 'location-1',
         warehouse: { id: WAREHOUSE_ID },
       });
+      productVariantRepo.find.mockResolvedValue([
+        {
+          id: 'variant-1',
+          name: 'Kirmizi / M',
+          product: { name: 'Tisort' },
+        },
+      ]);
 
       const result = await service.createPutawayTask({
         warehouseId: WAREHOUSE_ID,
@@ -299,8 +308,11 @@ describe('WarehouseService', () => {
           warehouseId: WAREHOUSE_ID,
           productVariantId: 'variant-1',
           quantity: 12,
+          productName: 'Tisort',
+          variantName: 'Kirmizi / M',
         }),
       );
+      expect(result).not.toHaveProperty('tenant');
     });
 
     it('goods receipt endpointi warehouse ve variant bilgisini receipt linetan derive eder', async () => {
@@ -320,6 +332,13 @@ describe('WarehouseService', () => {
         id: 'location-1',
         warehouse: { id: WAREHOUSE_ID },
       });
+      productVariantRepo.find.mockResolvedValue([
+        {
+          id: 'variant-1',
+          name: 'Kirmizi / M',
+          product: { name: 'Tisort' },
+        },
+      ]);
 
       const result = await service.createPutawayTasksFromGoodsReceipt('receipt-1', {
         lines: [
@@ -345,8 +364,11 @@ describe('WarehouseService', () => {
         expect.objectContaining({
           goodsReceiptId: 'receipt-1',
           goodsReceiptLineId: 'receipt-line-1',
+          productName: 'Tisort',
+          variantName: 'Kirmizi / M',
         }),
       ]);
+      expect(result[0]).not.toHaveProperty('tenant');
     });
 
     it('ayni goods receipt line icin aktif task varsa duplicate olusturmaz', async () => {
@@ -379,6 +401,80 @@ describe('WarehouseService', () => {
           ],
         }),
       ).rejects.toThrow(BadRequestException);
+    });
+
+    it('listPutawayTasks responseuna productName ve variantName ekler', async () => {
+      const qb = {
+        where: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'putaway-1',
+            warehouseId: WAREHOUSE_ID,
+            productVariantId: 'variant-1',
+            quantity: 5,
+            status: 'PENDING',
+            goodsReceiptId: 'receipt-1',
+            goodsReceiptLineId: 'receipt-line-1',
+          },
+        ]),
+      };
+      putawayRepo.createQueryBuilder.mockReturnValue(qb);
+      productVariantRepo.find.mockResolvedValue([
+        {
+          id: 'variant-1',
+          name: 'Kirmizi / M',
+          product: { name: 'Tisort' },
+        },
+      ]);
+
+      const result = await service.listPutawayTasks(WAREHOUSE_ID);
+
+      expect(qb.andWhere).toHaveBeenCalledWith('p.warehouseId = :warehouseId', {
+        warehouseId: WAREHOUSE_ID,
+      });
+      expect(result).toEqual([
+        expect.objectContaining({
+          id: 'putaway-1',
+          productName: 'Tisort',
+          variantName: 'Kirmizi / M',
+        }),
+      ]);
+      expect(result[0]).not.toHaveProperty('tenant');
+    });
+
+    it('getPutawayTask responseunda tenant alanini gizler ve isim alanlarini ekler', async () => {
+      putawayRepo.findOne.mockResolvedValue({
+        id: 'putaway-1',
+        tenant: { id: TENANT_ID },
+        warehouseId: WAREHOUSE_ID,
+        productVariantId: 'variant-1',
+        quantity: 5,
+        status: 'PENDING',
+        goodsReceiptId: 'receipt-1',
+        goodsReceiptLineId: 'receipt-line-1',
+        toLocation: { id: 'location-1', code: 'A-01-B1' },
+      });
+      productVariantRepo.find.mockResolvedValue([
+        {
+          id: 'variant-1',
+          name: 'Kirmizi / M',
+          product: { name: 'Tisort' },
+        },
+      ]);
+
+      const result = await service.getPutawayTask('putaway-1');
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'putaway-1',
+          productName: 'Tisort',
+          variantName: 'Kirmizi / M',
+          toLocation: expect.objectContaining({ id: 'location-1' }),
+        }),
+      );
+      expect(result).not.toHaveProperty('tenant');
     });
   });
 });

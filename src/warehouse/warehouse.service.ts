@@ -53,6 +53,8 @@ type CountSessionResponse = Omit<CountSession, 'lines'> & {
   lines?: CountSessionLineResponse[];
 };
 
+type PutawayTaskResponse = Omit<PutawayTask, 'tenant'> & VariantDetails;
+
 @Injectable()
 export class WarehouseService {
   constructor(
@@ -129,6 +131,17 @@ export class WarehouseService {
       throw new NotFoundException(`Mal kabul kaydi bulunamadi: ${id}`);
     }
     return receipt;
+  }
+
+  private async findPutawayTaskOrThrow(id: string): Promise<PutawayTask> {
+    const tenantId = this.getTenantId();
+    const task = await this.putawayRepo.findOne({
+      where: { id, tenant: { id: tenantId } },
+    });
+    if (!task) {
+      throw new NotFoundException(`Putaway görevi bulunamadı: ${id}`);
+    }
+    return task;
   }
 
   private assertLocationInWarehouse(location: Location, warehouseId: string): void {
@@ -234,6 +247,39 @@ export class WarehouseService {
   private async enrichCountSession(session: CountSession): Promise<CountSessionResponse> {
     const [enrichedSession] = await this.enrichCountSessions([session]);
     return enrichedSession;
+  }
+
+  private async enrichPutawayTasks(
+    tasks: PutawayTask[],
+  ): Promise<PutawayTaskResponse[]> {
+    if (tasks.length === 0) {
+      return [];
+    }
+
+    const variantIds = [
+      ...new Set(
+        tasks
+          .map((task) => task.productVariantId)
+          .filter((variantId): variantId is string => Boolean(variantId)),
+      ),
+    ];
+    const variantById = await this.loadVariantDetailsMap(variantIds);
+
+    return tasks.map((task) => {
+      const { tenant: _tenant, ...serializedTask } = task;
+      const variantDetails = variantById.get(task.productVariantId);
+
+      return {
+        ...serializedTask,
+        productName: variantDetails?.productName ?? null,
+        variantName: variantDetails?.variantName ?? null,
+      };
+    });
+  }
+
+  private async enrichPutawayTask(task: PutawayTask): Promise<PutawayTaskResponse> {
+    const [enrichedTask] = await this.enrichPutawayTasks([task]);
+    return enrichedTask;
   }
 
   private async loadVariantDetailsMap(
@@ -545,7 +591,7 @@ export class WarehouseService {
 
   // ---- Putaway Tasks ----
 
-  async createPutawayTask(dto: CreatePutawayTaskDto): Promise<PutawayTask> {
+  async createPutawayTask(dto: CreatePutawayTaskDto): Promise<PutawayTaskResponse> {
     const tenantId = this.getTenantId();
     const userId = this.getUserId();
     await this.findWarehouseOrThrow(dto.warehouseId);
@@ -563,13 +609,14 @@ export class WarehouseService {
       createdById: userId,
       updatedById: userId,
     });
-    return this.putawayRepo.save(task);
+    const savedTask = await this.putawayRepo.save(task);
+    return this.enrichPutawayTask(savedTask);
   }
 
   async createPutawayTasksFromGoodsReceipt(
     goodsReceiptId: string,
     dto: CreateGoodsReceiptPutawayTasksDto,
-  ): Promise<PutawayTask[]> {
+  ): Promise<PutawayTaskResponse[]> {
     const tenantId = this.getTenantId();
     const userId = this.getUserId();
     const receipt = await this.findGoodsReceiptOrThrow(goodsReceiptId);
@@ -639,10 +686,11 @@ export class WarehouseService {
       );
     }
 
-    return this.putawayRepo.save(tasks);
+    const savedTasks = await this.putawayRepo.save(tasks);
+    return this.enrichPutawayTasks(savedTasks);
   }
 
-  async listPutawayTasks(warehouseId?: string): Promise<PutawayTask[]> {
+  async listPutawayTasks(warehouseId?: string): Promise<PutawayTaskResponse[]> {
     const tenantId = this.getTenantId();
     const qb = this.putawayRepo
       .createQueryBuilder('p')
@@ -651,31 +699,29 @@ export class WarehouseService {
     if (warehouseId) {
       qb.andWhere('p.warehouseId = :warehouseId', { warehouseId });
     }
-    return qb.getMany();
+    const tasks = await qb.getMany();
+    return this.enrichPutawayTasks(tasks);
   }
 
-  async getPutawayTask(id: string): Promise<PutawayTask> {
-    const tenantId = this.getTenantId();
-    const task = await this.putawayRepo.findOne({
-      where: { id, tenant: { id: tenantId } },
-    });
-    if (!task) throw new NotFoundException(`Putaway görevi bulunamadı: ${id}`);
-    return task;
+  async getPutawayTask(id: string): Promise<PutawayTaskResponse> {
+    const task = await this.findPutawayTaskOrThrow(id);
+    return this.enrichPutawayTask(task);
   }
 
-  async assignPutawayTask(id: string, dto: AssignPutawayTaskDto): Promise<PutawayTask> {
-    const task = await this.getPutawayTask(id);
+  async assignPutawayTask(id: string, dto: AssignPutawayTaskDto): Promise<PutawayTaskResponse> {
+    const task = await this.findPutawayTaskOrThrow(id);
     if (task.status === PutawayTaskStatus.COMPLETED || task.status === PutawayTaskStatus.CANCELLED) {
       throw new BadRequestException('Tamamlanmış veya iptal edilmiş görev atanamaz.');
     }
     task.assignedToUserId = dto.userId;
     task.status = PutawayTaskStatus.IN_PROGRESS;
     task.updatedById = this.getUserId();
-    return this.putawayRepo.save(task);
+    const savedTask = await this.putawayRepo.save(task);
+    return this.enrichPutawayTask(savedTask);
   }
 
-  async completePutawayTask(id: string): Promise<PutawayTask> {
-    const task = await this.getPutawayTask(id);
+  async completePutawayTask(id: string): Promise<PutawayTaskResponse> {
+    const task = await this.findPutawayTaskOrThrow(id);
     if (task.status === PutawayTaskStatus.COMPLETED) {
       throw new BadRequestException('Görev zaten tamamlanmış.');
     }
@@ -685,17 +731,19 @@ export class WarehouseService {
     task.status = PutawayTaskStatus.COMPLETED;
     task.completedAt = new Date();
     task.updatedById = this.getUserId();
-    return this.putawayRepo.save(task);
+    const savedTask = await this.putawayRepo.save(task);
+    return this.enrichPutawayTask(savedTask);
   }
 
-  async cancelPutawayTask(id: string): Promise<PutawayTask> {
-    const task = await this.getPutawayTask(id);
+  async cancelPutawayTask(id: string): Promise<PutawayTaskResponse> {
+    const task = await this.findPutawayTaskOrThrow(id);
     if (task.status === PutawayTaskStatus.COMPLETED) {
       throw new BadRequestException('Tamamlanmış görev iptal edilemez.');
     }
     task.status = PutawayTaskStatus.CANCELLED;
     task.updatedById = this.getUserId();
-    return this.putawayRepo.save(task);
+    const savedTask = await this.putawayRepo.save(task);
+    return this.enrichPutawayTask(savedTask);
   }
 
   // ---- Waves ----
