@@ -51,7 +51,9 @@
       "Read(//tmp/**)",
       "Bash(echo \"EXIT:$?\")",
       "Bash(nvm use 22)",
-      "Bash(nvm use 22 --silent)"
+      "Bash(nvm use 22 --silent)",
+      "Bash(node -e \"console.log\\(require\\(''crypto''\\).randomBytes\\(32\\).toString\\(''hex''\\)\\)\")",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node -e \"console.log\\(require\\(''crypto''\\).randomBytes\\(32\\).toString\\(''hex''\\)\\)\")"
     ]
   }
 }

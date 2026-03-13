@@ -9,6 +9,7 @@ import { GoodsReceiptLine } from './entities/goods-receipt-line.entity';
 import { InventoryModule } from 'src/inventory/inventory.module';
 import { AuditLogModule } from 'src/audit-log/audit-log.module';
 import { OutboxModule } from 'src/outbox/outbox.module';
+import { ProductVariant } from 'src/product/product-variant.entity';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { OutboxModule } from 'src/outbox/outbox.module';
       PurchaseOrderLine,
       GoodsReceipt,
       GoodsReceiptLine,
+      ProductVariant,
     ]),
     InventoryModule,
     AuditLogModule,

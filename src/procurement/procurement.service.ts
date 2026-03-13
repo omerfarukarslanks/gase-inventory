@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, Repository } from 'typeorm';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { InventoryService } from 'src/inventory/inventory.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
@@ -16,6 +16,30 @@ import { GoodsReceiptLine } from './entities/goods-receipt-line.entity';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreateGoodsReceiptDto } from './dto/create-goods-receipt.dto';
 import { ListPurchaseOrdersDto } from './dto/list-purchase-orders.dto';
+import { ProductVariant } from 'src/product/product-variant.entity';
+
+type GoodsReceiptLineResponse = GoodsReceiptLine & {
+  productName: string | null;
+  variantName: string | null;
+};
+
+type PurchaseOrderLineResponse = PurchaseOrderLine & {
+  productName: string | null;
+  variantName: string | null;
+};
+
+type GoodsReceiptResponse = Omit<GoodsReceipt, 'lines'> & {
+  lines: GoodsReceiptLineResponse[];
+};
+
+type PurchaseOrderResponse = Omit<PurchaseOrder, 'lines'> & {
+  lines: PurchaseOrderLineResponse[];
+};
+
+type VariantDetails = {
+  productName: string | null;
+  variantName: string | null;
+};
 
 @Injectable()
 export class ProcurementService {
@@ -28,6 +52,8 @@ export class ProcurementService {
     private readonly grRepo: Repository<GoodsReceipt>,
     @InjectRepository(GoodsReceiptLine)
     private readonly grLineRepo: Repository<GoodsReceiptLine>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepo: Repository<ProductVariant>,
     private readonly appContext: AppContextService,
     private readonly inventoryService: InventoryService,
     private readonly dataSource: DataSource,
@@ -154,7 +180,10 @@ export class ProcurementService {
 
   // ─── Mal teslim al ──────────────────────────────────────────────────────────
 
-  async createGoodsReceipt(poId: string, dto: CreateGoodsReceiptDto): Promise<GoodsReceipt> {
+  async createGoodsReceipt(
+    poId: string,
+    dto: CreateGoodsReceiptDto,
+  ): Promise<GoodsReceiptResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const actorId = this.appContext.getUserIdOrNull();
 
@@ -246,7 +275,11 @@ export class ProcurementService {
         ? PurchaseOrderStatus.RECEIVED
         : PurchaseOrderStatus.PARTIALLY_RECEIVED;
       po.updatedById = actorId;
-      await manager.getRepository(PurchaseOrder).save(po);
+      await manager.getRepository(PurchaseOrder).save({
+        id: po.id,
+        status: po.status,
+        updatedById: actorId,
+      });
 
       await this.auditLog.log(
         {
@@ -273,10 +306,16 @@ export class ProcurementService {
         manager,
       );
 
-      return grRepo.findOne({
+      const receipt = await grRepo.findOne({
         where: { id: savedGr.id },
         relations: ['lines', 'lines.purchaseOrderLine', 'store'],
-      }) as Promise<GoodsReceipt>;
+      });
+
+      if (!receipt) {
+        throw new NotFoundException('Teslim kaydi bulunamadi');
+      }
+
+      return this.enrichGoodsReceipt(receipt);
     });
   }
 
@@ -324,22 +363,25 @@ export class ProcurementService {
 
   // ─── Tekil PO ───────────────────────────────────────────────────────────────
 
-  async getPurchaseOrder(poId: string): Promise<PurchaseOrder> {
+  async getPurchaseOrder(poId: string): Promise<PurchaseOrderResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
-    return this.findPurchaseOrderOrThrow(poId, tenantId);
+    const po = await this.findPurchaseOrderOrThrow(poId, tenantId);
+    return this.enrichPurchaseOrder(po);
   }
 
   // ─── Goods receipt listesi ──────────────────────────────────────────────────
 
-  async listGoodsReceipts(poId: string): Promise<GoodsReceipt[]> {
+  async listGoodsReceipts(poId: string): Promise<GoodsReceiptResponse[]> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     await this.findPurchaseOrderOrThrow(poId, tenantId);
 
-    return this.grRepo.find({
+    const receipts = await this.grRepo.find({
       where: { purchaseOrder: { id: poId }, tenant: { id: tenantId } },
       relations: ['lines', 'lines.purchaseOrderLine', 'store'],
       order: { createdAt: 'DESC' },
     });
+
+    return this.enrichGoodsReceipts(receipts);
   }
 
   // ─── Internal ───────────────────────────────────────────────────────────────
@@ -363,5 +405,91 @@ export class ProcurementService {
     }
 
     return po;
+  }
+
+  private async enrichGoodsReceipt(
+    receipt: GoodsReceipt,
+  ): Promise<GoodsReceiptResponse> {
+    const [enriched] = await this.enrichGoodsReceipts([receipt]);
+    return enriched;
+  }
+
+  private async enrichGoodsReceipts(
+    receipts: GoodsReceipt[],
+  ): Promise<GoodsReceiptResponse[]> {
+    const variantIds = Array.from(
+      new Set(
+        receipts.flatMap((receipt) =>
+          (receipt.lines ?? [])
+            .map((line) => line.purchaseOrderLine?.productVariantId)
+            .filter((variantId): variantId is string => Boolean(variantId)),
+        ),
+      ),
+    );
+
+    const variantById = await this.loadVariantDetailsMap(variantIds);
+
+    return receipts.map((receipt) => ({
+      ...receipt,
+      lines: (receipt.lines ?? []).map((line) => {
+        const variantDetails = line.purchaseOrderLine?.productVariantId
+          ? variantById.get(line.purchaseOrderLine.productVariantId)
+          : undefined;
+
+        return {
+          ...line,
+          productName: variantDetails?.productName ?? null,
+          variantName: variantDetails?.variantName ?? null,
+        };
+      }),
+    }));
+  }
+
+  private async enrichPurchaseOrder(
+    po: PurchaseOrder,
+  ): Promise<PurchaseOrderResponse> {
+    const variantIds = Array.from(
+      new Set(
+        (po.lines ?? [])
+          .map((line) => line.productVariantId)
+          .filter((variantId): variantId is string => Boolean(variantId)),
+      ),
+    );
+    const variantById = await this.loadVariantDetailsMap(variantIds);
+
+    return {
+      ...po,
+      lines: (po.lines ?? []).map((line) => {
+        const variantDetails = variantById.get(line.productVariantId);
+
+        return {
+          ...line,
+          productName: variantDetails?.productName ?? null,
+          variantName: variantDetails?.variantName ?? null,
+        };
+      }),
+    };
+  }
+
+  private async loadVariantDetailsMap(
+    variantIds: string[],
+  ): Promise<Map<string, VariantDetails>> {
+    if (variantIds.length === 0) {
+      return new Map<string, VariantDetails>();
+    }
+
+    const variants = await this.productVariantRepo.find({
+      where: { id: In(variantIds) },
+      relations: ['product'],
+    });
+    return new Map(
+      variants.map((variant) => [
+        variant.id,
+        {
+          productName: variant.product?.name ?? null,
+          variantName: variant.name ?? null,
+        },
+      ]),
+    );
   }
 }
