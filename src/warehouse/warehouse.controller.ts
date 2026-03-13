@@ -21,6 +21,7 @@ import {
   AssignPutawayTaskDto,
   CompletePickingTaskDto,
   CreateCountSessionDto,
+  CreateGoodsReceiptPutawayTasksDto,
   CreateLocationDto,
   CreatePickingTaskDto,
   CreatePutawayTaskDto,
@@ -167,6 +168,16 @@ export class WarehouseController {
   @RequirePermission(Permissions.WAREHOUSE_MANAGE)
   createPutawayTask(@Body() dto: CreatePutawayTaskDto) {
     return this.warehouseService.createPutawayTask(dto);
+  }
+
+  @Post('goods-receipts/:id/putaway-tasks')
+  @ApiOperation({ summary: 'Mal kabul kaydindan putaway gorevleri oluştur' })
+  @RequirePermission(Permissions.WAREHOUSE_MANAGE)
+  createPutawayTasksFromGoodsReceipt(
+    @Param('id') id: string,
+    @Body() dto: CreateGoodsReceiptPutawayTasksDto,
+  ) {
+    return this.warehouseService.createPutawayTasksFromGoodsReceipt(id, dto);
   }
 
   @Get('putaway-tasks')

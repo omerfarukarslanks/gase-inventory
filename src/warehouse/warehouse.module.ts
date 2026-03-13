@@ -12,6 +12,8 @@ import { WarehouseController } from './warehouse.controller';
 import { InventoryModule } from 'src/inventory/inventory.module';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { GoodsReceipt } from 'src/procurement/entities/goods-receipt.entity';
+import { GoodsReceiptLine } from 'src/procurement/entities/goods-receipt-line.entity';
 
 @Module({
   imports: [
@@ -25,6 +27,8 @@ import { ProductVariant } from 'src/product/product-variant.entity';
       PickingTask,
       Store,
       ProductVariant,
+      GoodsReceipt,
+      GoodsReceiptLine,
     ]),
     InventoryModule,
   ],

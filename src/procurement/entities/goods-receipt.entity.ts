@@ -1,7 +1,7 @@
 import { AuditableEntity } from 'src/common/entity/auditable-base.entity';
 import { Store } from 'src/store/store.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
-import { Column, CreateDateColumn, Entity, ManyToOne, OneToMany } from 'typeorm';
+import { Column, CreateDateColumn, Entity, Index, ManyToOne, OneToMany } from 'typeorm';
 import { PurchaseOrder } from './purchase-order.entity';
 import { GoodsReceiptLine } from './goods-receipt-line.entity';
 
@@ -15,6 +15,11 @@ export class GoodsReceipt extends AuditableEntity {
 
   @ManyToOne(() => Store, { nullable: false, eager: true })
   store: Store;
+
+  /** Mal kabulun yapildigi hedef depo (cross-module ref, sade UUID) */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  warehouseId?: string;
 
   @CreateDateColumn({ type: 'timestamptz' })
   receivedAt: Date;

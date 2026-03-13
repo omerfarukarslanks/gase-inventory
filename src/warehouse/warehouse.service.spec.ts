@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
@@ -11,6 +12,7 @@ import { Wave } from './entities/wave.entity';
 import { PickingTask } from './entities/picking-task.entity';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { GoodsReceipt } from 'src/procurement/entities/goods-receipt.entity';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { InventoryService } from 'src/inventory/inventory.service';
 
@@ -23,6 +25,7 @@ describe('WarehouseService', () => {
   let service: WarehouseService;
   let warehouseRepo: {
     find: jest.Mock;
+    findOne: jest.Mock;
   };
   let storeRepo: {
     find: jest.Mock;
@@ -32,6 +35,7 @@ describe('WarehouseService', () => {
   };
   let locationRepo: {
     find: jest.Mock;
+    findOne: jest.Mock;
   };
   let sessionRepo: {
     createQueryBuilder: jest.Mock;
@@ -41,10 +45,20 @@ describe('WarehouseService', () => {
     findOne: jest.Mock;
     save: jest.Mock;
   };
+  let putawayRepo: {
+    create: jest.Mock;
+    find: jest.Mock;
+    findOne: jest.Mock;
+    save: jest.Mock;
+  };
+  let goodsReceiptRepo: {
+    findOne: jest.Mock;
+  };
 
   beforeEach(async () => {
     warehouseRepo = {
       find: jest.fn(),
+      findOne: jest.fn(),
     };
 
     storeRepo = {
@@ -57,6 +71,7 @@ describe('WarehouseService', () => {
 
     locationRepo = {
       find: jest.fn(),
+      findOne: jest.fn(),
     };
 
     sessionRepo = {
@@ -69,16 +84,28 @@ describe('WarehouseService', () => {
       save: jest.fn(async (line: any) => line),
     };
 
+    putawayRepo = {
+      create: jest.fn((dto: any) => dto),
+      find: jest.fn(),
+      findOne: jest.fn(),
+      save: jest.fn(async (taskOrTasks: any) => taskOrTasks),
+    };
+
+    goodsReceiptRepo = {
+      findOne: jest.fn(),
+    };
+
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         WarehouseService,
         { provide: getRepositoryToken(Warehouse), useValue: warehouseRepo },
         { provide: getRepositoryToken(Store), useValue: storeRepo },
         { provide: getRepositoryToken(ProductVariant), useValue: productVariantRepo },
+        { provide: getRepositoryToken(GoodsReceipt), useValue: goodsReceiptRepo },
         { provide: getRepositoryToken(Location), useValue: locationRepo },
         { provide: getRepositoryToken(CountSession), useValue: sessionRepo },
         { provide: getRepositoryToken(CountLine), useValue: lineRepo },
-        { provide: getRepositoryToken(PutawayTask), useValue: {} },
+        { provide: getRepositoryToken(PutawayTask), useValue: putawayRepo },
         { provide: getRepositoryToken(Wave), useValue: {} },
         { provide: getRepositoryToken(PickingTask), useValue: {} },
         {
@@ -240,6 +267,118 @@ describe('WarehouseService', () => {
           difference: -2,
         }),
       );
+    });
+  });
+
+  describe('putaway tasks', () => {
+    it('generic create akisi goodsReceiptId almadan ad-hoc task olusturur', async () => {
+      warehouseRepo.findOne.mockResolvedValue({ id: WAREHOUSE_ID });
+      locationRepo.findOne.mockResolvedValue({
+        id: 'location-1',
+        warehouse: { id: WAREHOUSE_ID },
+      });
+
+      const result = await service.createPutawayTask({
+        warehouseId: WAREHOUSE_ID,
+        productVariantId: 'variant-1',
+        quantity: 12,
+        toLocationId: 'location-1',
+        notes: 'manual task',
+      });
+
+      expect(putawayRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          warehouseId: WAREHOUSE_ID,
+          productVariantId: 'variant-1',
+          quantity: 12,
+          createdById: USER_ID,
+        }),
+      );
+      expect(result).toEqual(
+        expect.objectContaining({
+          warehouseId: WAREHOUSE_ID,
+          productVariantId: 'variant-1',
+          quantity: 12,
+        }),
+      );
+    });
+
+    it('goods receipt endpointi warehouse ve variant bilgisini receipt linetan derive eder', async () => {
+      goodsReceiptRepo.findOne.mockResolvedValue({
+        id: 'receipt-1',
+        warehouseId: WAREHOUSE_ID,
+        lines: [
+          {
+            id: 'receipt-line-1',
+            receivedQuantity: 20,
+            purchaseOrderLine: { productVariantId: 'variant-1' },
+          },
+        ],
+      });
+      putawayRepo.find.mockResolvedValue([]);
+      locationRepo.findOne.mockResolvedValue({
+        id: 'location-1',
+        warehouse: { id: WAREHOUSE_ID },
+      });
+
+      const result = await service.createPutawayTasksFromGoodsReceipt('receipt-1', {
+        lines: [
+          {
+            goodsReceiptLineId: 'receipt-line-1',
+            toLocationId: 'location-1',
+          },
+        ],
+        notes: 'receipt-based task',
+      });
+
+      expect(putawayRepo.save).toHaveBeenCalledWith([
+        expect.objectContaining({
+          warehouseId: WAREHOUSE_ID,
+          productVariantId: 'variant-1',
+          quantity: 20,
+          goodsReceiptId: 'receipt-1',
+          goodsReceiptLineId: 'receipt-line-1',
+          notes: 'receipt-based task',
+        }),
+      ]);
+      expect(result).toEqual([
+        expect.objectContaining({
+          goodsReceiptId: 'receipt-1',
+          goodsReceiptLineId: 'receipt-line-1',
+        }),
+      ]);
+    });
+
+    it('ayni goods receipt line icin aktif task varsa duplicate olusturmaz', async () => {
+      goodsReceiptRepo.findOne.mockResolvedValue({
+        id: 'receipt-1',
+        warehouseId: WAREHOUSE_ID,
+        lines: [
+          {
+            id: 'receipt-line-1',
+            receivedQuantity: 20,
+            purchaseOrderLine: { productVariantId: 'variant-1' },
+          },
+        ],
+      });
+      putawayRepo.find.mockResolvedValue([
+        {
+          id: 'putaway-1',
+          goodsReceiptLineId: 'receipt-line-1',
+          status: 'PENDING',
+        },
+      ]);
+
+      await expect(
+        service.createPutawayTasksFromGoodsReceipt('receipt-1', {
+          lines: [
+            {
+              goodsReceiptLineId: 'receipt-line-1',
+              toLocationId: 'location-1',
+            },
+          ],
+        }),
+      ).rejects.toThrow(BadRequestException);
     });
   });
 });

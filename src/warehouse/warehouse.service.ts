@@ -19,12 +19,14 @@ import { AppContextService } from 'src/common/context/app-context.service';
 import { InventoryService } from 'src/inventory/inventory.service';
 import { Store } from 'src/store/store.entity';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { GoodsReceipt } from 'src/procurement/entities/goods-receipt.entity';
 import {
   AddCountLineDto,
   AssignPickingTaskDto,
   AssignPutawayTaskDto,
   CompletePickingTaskDto,
   CreateCountSessionDto,
+  CreateGoodsReceiptPutawayTasksDto,
   CreateLocationDto,
   CreatePickingTaskDto,
   CreatePutawayTaskDto,
@@ -60,6 +62,8 @@ export class WarehouseService {
     private readonly storeRepo: Repository<Store>,
     @InjectRepository(ProductVariant)
     private readonly productVariantRepo: Repository<ProductVariant>,
+    @InjectRepository(GoodsReceipt)
+    private readonly goodsReceiptRepo: Repository<GoodsReceipt>,
     @InjectRepository(Location)
     private readonly locationRepo: Repository<Location>,
     @InjectRepository(CountSession)
@@ -113,6 +117,26 @@ export class WarehouseService {
     });
     if (!session) throw new NotFoundException(`Sayım oturumu bulunamadı: ${id}`);
     return session;
+  }
+
+  private async findGoodsReceiptOrThrow(id: string): Promise<GoodsReceipt> {
+    const tenantId = this.getTenantId();
+    const receipt = await this.goodsReceiptRepo.findOne({
+      where: { id, tenant: { id: tenantId } },
+      relations: ['lines', 'lines.purchaseOrderLine', 'store'],
+    });
+    if (!receipt) {
+      throw new NotFoundException(`Mal kabul kaydi bulunamadi: ${id}`);
+    }
+    return receipt;
+  }
+
+  private assertLocationInWarehouse(location: Location, warehouseId: string): void {
+    if (location.warehouse?.id !== warehouseId) {
+      throw new BadRequestException(
+        `Lokasyon belirtilen depoya ait degil: ${location.id}`,
+      );
+    }
   }
 
   private async enrichCountSessions(
@@ -526,6 +550,7 @@ export class WarehouseService {
     const userId = this.getUserId();
     await this.findWarehouseOrThrow(dto.warehouseId);
     const toLocation = await this.findLocationOrThrow(dto.toLocationId);
+    this.assertLocationInWarehouse(toLocation, dto.warehouseId);
 
     const task = this.putawayRepo.create({
       tenant: { id: tenantId } as any,
@@ -533,13 +558,88 @@ export class WarehouseService {
       productVariantId: dto.productVariantId,
       quantity: dto.quantity,
       toLocation,
-      goodsReceiptId: dto.goodsReceiptId,
       notes: dto.notes,
       status: PutawayTaskStatus.PENDING,
       createdById: userId,
       updatedById: userId,
     });
     return this.putawayRepo.save(task);
+  }
+
+  async createPutawayTasksFromGoodsReceipt(
+    goodsReceiptId: string,
+    dto: CreateGoodsReceiptPutawayTasksDto,
+  ): Promise<PutawayTask[]> {
+    const tenantId = this.getTenantId();
+    const userId = this.getUserId();
+    const receipt = await this.findGoodsReceiptOrThrow(goodsReceiptId);
+
+    if (!receipt.warehouseId) {
+      throw new BadRequestException(
+        `Mal kabul kaydinda warehouse bilgisi yok: ${goodsReceiptId}`,
+      );
+    }
+
+    const lineIds = dto.lines.map((line) => line.goodsReceiptLineId);
+    const uniqueLineIds = Array.from(new Set(lineIds));
+    if (uniqueLineIds.length !== lineIds.length) {
+      throw new BadRequestException('Ayni mal kabul satiri birden fazla kez secilemez.');
+    }
+
+    const receiptLineById = new Map(
+      (receipt.lines ?? []).map((line) => [line.id, line]),
+    );
+    const existingTasks = await this.putawayRepo.find({
+      where: {
+        tenant: { id: tenantId },
+        goodsReceiptId,
+        goodsReceiptLineId: In(uniqueLineIds),
+      },
+    });
+    const blockedLineIds = new Set(
+      existingTasks
+        .filter((task) => task.status !== PutawayTaskStatus.CANCELLED)
+        .map((task) => task.goodsReceiptLineId)
+        .filter((lineId): lineId is string => Boolean(lineId)),
+    );
+
+    for (const lineId of blockedLineIds) {
+      throw new BadRequestException(
+        `Bu mal kabul satiri icin zaten putaway gorevi mevcut: ${lineId}`,
+      );
+    }
+
+    const tasks: PutawayTask[] = [];
+
+    for (const lineDto of dto.lines) {
+      const receiptLine = receiptLineById.get(lineDto.goodsReceiptLineId);
+      if (!receiptLine) {
+        throw new NotFoundException(
+          `Mal kabul satiri bulunamadi: ${lineDto.goodsReceiptLineId}`,
+        );
+      }
+
+      const toLocation = await this.findLocationOrThrow(lineDto.toLocationId);
+      this.assertLocationInWarehouse(toLocation, receipt.warehouseId);
+
+      tasks.push(
+        this.putawayRepo.create({
+          tenant: { id: tenantId } as any,
+          warehouseId: receipt.warehouseId,
+          productVariantId: receiptLine.purchaseOrderLine.productVariantId,
+          quantity: receiptLine.receivedQuantity,
+          toLocation,
+          goodsReceiptId,
+          goodsReceiptLineId: receiptLine.id,
+          notes: dto.notes,
+          status: PutawayTaskStatus.PENDING,
+          createdById: userId,
+          updatedById: userId,
+        }),
+      );
+    }
+
+    return this.putawayRepo.save(tasks);
   }
 
   async listPutawayTasks(warehouseId?: string): Promise<PutawayTask[]> {

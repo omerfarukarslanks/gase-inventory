@@ -17,6 +17,7 @@ import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreateGoodsReceiptDto } from './dto/create-goods-receipt.dto';
 import { ListPurchaseOrdersDto } from './dto/list-purchase-orders.dto';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { Warehouse } from 'src/warehouse/entities/warehouse.entity';
 
 type GoodsReceiptLineResponse = GoodsReceiptLine & {
   productName: string | null;
@@ -202,12 +203,19 @@ export class ProcurementService {
       const poLineRepo = manager.getRepository(PurchaseOrderLine);
       const grRepo = manager.getRepository(GoodsReceipt);
       const grLineRepo = manager.getRepository(GoodsReceiptLine);
+      const warehouse = await this.findWarehouseForGoodsReceiptOrThrow(
+        dto.warehouseId,
+        po,
+        tenantId,
+        manager,
+      );
 
       // GoodsReceipt kaydet
       const gr = grRepo.create({
         tenant: { id: tenantId } as any,
         purchaseOrder: po,
         store: po.store,
+        warehouseId: warehouse.id,
         notes: dto.notes,
         createdById: actorId,
         updatedById: actorId,
@@ -300,6 +308,7 @@ export class ProcurementService {
             goodsReceiptId: savedGr.id,
             purchaseOrderId: po.id,
             storeId: (po.store as any).id,
+            warehouseId: warehouse.id,
             newPoStatus: po.status,
           },
         },
@@ -405,6 +414,30 @@ export class ProcurementService {
     }
 
     return po;
+  }
+
+  private async findWarehouseForGoodsReceiptOrThrow(
+    warehouseId: string,
+    po: PurchaseOrder,
+    tenantId: string,
+    manager: EntityManager,
+  ): Promise<Warehouse> {
+    const warehouse = await manager.getRepository(Warehouse).findOne({
+      where: {
+        id: warehouseId,
+        tenant: { id: tenantId },
+        storeId: (po.store as any).id,
+        isActive: true,
+      },
+    });
+
+    if (!warehouse) {
+      throw new BadRequestException(
+        `Depo bulunamadi veya siparisin magazasi ile uyusmuyor: ${warehouseId}`,
+      );
+    }
+
+    return warehouse;
   }
 
   private async enrichGoodsReceipt(

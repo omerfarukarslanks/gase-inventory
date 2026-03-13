@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsDateString,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsPositive,
@@ -35,6 +36,11 @@ export class CreateGoodsReceiptLineDto {
 }
 
 export class CreateGoodsReceiptDto {
+  @ApiProperty({ description: 'Mal kabulun yapilacagi depo ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  warehouseId: string;
+
   @ApiPropertyOptional({ description: 'Teslim alma notu' })
   @IsOptional()
   @IsString()

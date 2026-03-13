@@ -1,5 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMinSize,
   IsBoolean,
   IsEnum,
   IsNotEmpty,
@@ -7,6 +9,7 @@ import {
   IsOptional,
   IsString,
   IsUUID,
+  ValidateNested,
 } from 'class-validator';
 import { LocationType } from '../entities/location.entity';
 
@@ -159,10 +162,33 @@ export class CreatePutawayTaskDto {
   @IsNotEmpty()
   toLocationId: string;
 
-  @ApiPropertyOptional({ description: 'İlgili mal kabul belgesi ID' })
+  @ApiPropertyOptional({ description: 'Notlar' })
   @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+export class CreateGoodsReceiptPutawayTaskLineDto {
+  @ApiProperty({ description: 'İlgili mal kabul satırı ID' })
   @IsUUID('4')
-  goodsReceiptId?: string;
+  @IsNotEmpty()
+  goodsReceiptLineId: string;
+
+  @ApiProperty({ description: 'Hedef lokasyon ID' })
+  @IsUUID('4')
+  @IsNotEmpty()
+  toLocationId: string;
+}
+
+export class CreateGoodsReceiptPutawayTasksDto {
+  @ApiProperty({
+    type: [CreateGoodsReceiptPutawayTaskLineDto],
+    description: 'Putaway oluşturulacak mal kabul satırları',
+  })
+  @ValidateNested({ each: true })
+  @Type(() => CreateGoodsReceiptPutawayTaskLineDto)
+  @ArrayMinSize(1, { message: 'En az 1 mal kabul satiri secilmelidir' })
+  lines: CreateGoodsReceiptPutawayTaskLineDto[];
 
   @ApiPropertyOptional({ description: 'Notlar' })
   @IsOptional()

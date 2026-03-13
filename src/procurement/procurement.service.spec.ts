@@ -12,10 +12,12 @@ import { InventoryService } from 'src/inventory/inventory.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { OutboxService } from 'src/outbox/outbox.service';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { Warehouse } from 'src/warehouse/entities/warehouse.entity';
 
 const TENANT_ID = 'tenant-uuid-1111';
 const USER_ID   = 'user-uuid-2222';
 const STORE_ID  = 'store-uuid-3333';
+const WAREHOUSE_ID = 'warehouse-uuid-9999';
 const VARIANT_ID = 'variant-uuid-4444';
 const PO_ID     = 'po-uuid-5555';
 
@@ -226,6 +228,13 @@ describe('ProcurementService', () => {
         create: jest.fn().mockImplementation((dto) => dto),
         save: jest.fn().mockResolvedValue({}),
       };
+      const warehouseRepo = {
+        findOne: jest.fn().mockResolvedValue({
+          id: WAREHOUSE_ID,
+          storeId: STORE_ID,
+          isActive: true,
+        }),
+      };
       productVariantRepo.find.mockResolvedValue([
         {
           id: VARIANT_ID,
@@ -239,10 +248,12 @@ describe('ProcurementService', () => {
         if (entity === PurchaseOrderLine) return poLineRepo;
         if (entity === GoodsReceipt) return grRepo;
         if (entity === GoodsReceiptLine) return grLineRepo;
+        if (entity === Warehouse) return warehouseRepo;
         return poRepo;
       });
 
       const result = await service.createGoodsReceipt(PO_ID, {
+        warehouseId: WAREHOUSE_ID,
         lines: [
           {
             purchaseOrderLineId: poLine.id,
@@ -261,6 +272,20 @@ describe('ProcurementService', () => {
         }),
         manager,
       );
+      expect(grRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          warehouseId: WAREHOUSE_ID,
+        }),
+      );
+      expect(outbox.publish).toHaveBeenCalledWith(
+        expect.objectContaining({
+          payload: expect.objectContaining({
+            goodsReceiptId: savedGr.id,
+            warehouseId: WAREHOUSE_ID,
+          }),
+        }),
+        manager,
+      );
       expect(poRepo.save).toHaveBeenCalledWith({
         id: PO_ID,
         status: PurchaseOrderStatus.RECEIVED,
@@ -272,6 +297,51 @@ describe('ProcurementService', () => {
           variantName: 'Kirmizi / M',
         }),
       );
+    });
+
+    it('warehouse siparisin magazasi ile uyusmuyorsa BadRequest firlatir', async () => {
+      const poLine = {
+        id: 'line-uuid-7777',
+        productVariantId: VARIANT_ID,
+        quantity: 10,
+        receivedQuantity: 0,
+      } as PurchaseOrderLine;
+      const po = {
+        id: PO_ID,
+        status: PurchaseOrderStatus.APPROVED,
+        store: { id: STORE_ID },
+        lines: [poLine],
+        goodsReceipts: [],
+      } as any;
+      const poRepo = {
+        findOne: jest.fn().mockResolvedValue(po),
+        save: jest.fn(),
+      };
+      const warehouseRepo = {
+        findOne: jest.fn().mockResolvedValue(null),
+      };
+
+      manager.getRepository.mockImplementation((entity: any) => {
+        if (entity === PurchaseOrder) return poRepo;
+        if (entity === Warehouse) return warehouseRepo;
+        return {
+          findOne: jest.fn(),
+          save: jest.fn(),
+          create: jest.fn((dto: any) => dto),
+        };
+      });
+
+      await expect(
+        service.createGoodsReceipt(PO_ID, {
+          warehouseId: WAREHOUSE_ID,
+          lines: [
+            {
+              purchaseOrderLineId: poLine.id,
+              receivedQuantity: 5,
+            },
+          ],
+        } as any),
+      ).rejects.toThrow(BadRequestException);
     });
 
     it('liste responseunda da productName ve variantName doner', async () => {
@@ -286,6 +356,7 @@ describe('ProcurementService', () => {
       } as any;
       const receipt = {
         id: 'gr-uuid-6666',
+        warehouseId: WAREHOUSE_ID,
         lines: [{ purchaseOrderLine: poLine }],
       } as any;
 

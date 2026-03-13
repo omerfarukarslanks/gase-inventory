@@ -49,6 +49,11 @@ export class PutawayTask extends AuditableEntity {
   @Column({ type: 'uuid', nullable: true })
   goodsReceiptId?: string;
 
+  /** Bu görevi tetikleyen mal kabul satırı ID (opsiyonel, line-level traceability) */
+  @Index()
+  @Column({ type: 'uuid', nullable: true })
+  goodsReceiptLineId?: string;
+
   /** Göreve atanan kullanıcı (cross-module UUID) */
   @Column({ type: 'uuid', nullable: true })
   assignedToUserId?: string;
