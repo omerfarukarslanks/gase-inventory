@@ -12,6 +12,7 @@ import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
 import { SerialNumber } from './serial-number.entity';
 import { AppContextService } from 'src/common/context/app-context.service';
+import { Location } from 'src/warehouse/entities/location.entity';
 
 const TENANT_ID  = 'tenant-aaa';
 const STORE_ID   = 'store-bbb';
@@ -100,6 +101,7 @@ describe('InventoryService — adjustStock', () => {
         { provide: getRepositoryToken(StoreProductPrice),  useValue: emptyRepo },
         { provide: getRepositoryToken(Supplier),           useValue: emptyRepo },
         { provide: getRepositoryToken(SerialNumber),       useValue: emptyRepo },
+        { provide: getRepositoryToken(Location),           useValue: emptyRepo },
         { provide: AppContextService, useValue: appContext },
         { provide: DataSource,        useValue: {} },
       ],
@@ -170,6 +172,7 @@ describe('InventoryService — receiveStock input validation', () => {
         { provide: getRepositoryToken(StoreProductPrice),  useValue: fullRepo },
         { provide: getRepositoryToken(Supplier),           useValue: fullRepo },
         { provide: getRepositoryToken(SerialNumber),       useValue: fullRepo },
+        { provide: getRepositoryToken(Location),           useValue: fullRepo },
         { provide: AppContextService, useValue: appContext },
         { provide: DataSource,        useValue: {} },
       ],
@@ -220,6 +223,7 @@ describe('InventoryService — getStockForVariantInStore', () => {
         { provide: getRepositoryToken(StoreProductPrice),  useValue: emptyRepo },
         { provide: getRepositoryToken(Supplier),           useValue: emptyRepo },
         { provide: getRepositoryToken(SerialNumber),       useValue: emptyRepo },
+        { provide: getRepositoryToken(Location),           useValue: emptyRepo },
         { provide: AppContextService, useValue: appContext },
         { provide: DataSource,        useValue: {} },
       ],
@@ -231,5 +235,185 @@ describe('InventoryService — getStockForVariantInStore', () => {
   it('stok kaydı yoksa 0 döner', async () => {
     const result = await service.getStockForVariantInStore(STORE_ID, VARIANT_ID);
     expect(result).toBe(0);
+  });
+});
+
+describe('InventoryService — getMovementHistory', () => {
+  let service: InventoryService;
+  let appContext: jest.Mocked<AppContextService>;
+  let locationRepo: { find: jest.Mock };
+  let movementRepo: { createQueryBuilder: jest.Mock; manager: { transaction: jest.Mock } };
+
+  beforeEach(async () => {
+    appContext = {
+      getTenantIdOrThrow: jest.fn().mockReturnValue(TENANT_ID),
+      getUserIdOrNull: jest.fn().mockReturnValue(USER_ID),
+      getUserIdOrThrow: jest.fn().mockReturnValue(USER_ID),
+      getStoreId: jest.fn().mockReturnValue(null),
+    } as any;
+
+    const qbMock = {
+      leftJoinAndSelect: jest.fn().mockReturnThis(),
+      leftJoin: jest.fn().mockReturnThis(),
+      where: jest.fn().mockReturnThis(),
+      andWhere: jest.fn().mockReturnThis(),
+      orderBy: jest.fn().mockReturnThis(),
+      skip: jest.fn().mockReturnThis(),
+      take: jest.fn().mockReturnThis(),
+      getManyAndCount: jest.fn().mockResolvedValue([
+        [
+          {
+            id: 'movement-1',
+            tenant: { id: TENANT_ID },
+            store: { id: STORE_ID, name: 'Merkez Magaza' },
+            productVariant: {
+              id: VARIANT_ID,
+              name: 'Kirmizi / M',
+              product: {
+                id: 'product-1',
+                name: 'Tisort',
+              },
+            },
+            type: MovementType.IN,
+            quantity: 10,
+            meta: { reason: 'Sayim fazlasi' },
+            locationId: 'location-1',
+            createdAt: new Date('2026-03-14T09:00:00.000Z'),
+          },
+          {
+            id: 'movement-2',
+            tenant: { id: TENANT_ID },
+            store: { id: STORE_ID, name: 'Merkez Magaza' },
+            productVariant: {
+              id: VARIANT_ID,
+              name: 'Kirmizi / M',
+              product: {
+                id: 'product-1',
+                name: 'Tisort',
+              },
+            },
+            type: MovementType.ADJUSTMENT,
+            quantity: -2,
+            meta: {},
+            createdAt: new Date('2026-03-14T08:00:00.000Z'),
+          },
+        ],
+        2,
+      ]),
+    };
+
+    movementRepo = {
+      createQueryBuilder: jest.fn().mockReturnValue(qbMock),
+      manager: {
+        transaction: jest.fn(async (cb: (m: any) => any) => cb({ getRepository: jest.fn() })),
+      },
+    };
+
+    locationRepo = {
+      find: jest.fn().mockResolvedValue([
+        {
+          id: 'location-1',
+          code: 'A-01-B1',
+          name: 'A Blok Raf 1',
+          warehouse: {
+            id: 'warehouse-1',
+            name: 'Ana Depo',
+          },
+        },
+      ]),
+    };
+
+    const emptyRepo = {
+      findOne: jest.fn(),
+      find: jest.fn(),
+      save: jest.fn(),
+      create: jest.fn(),
+      createQueryBuilder: jest.fn().mockReturnValue(defaultQb()),
+    };
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        InventoryService,
+        { provide: getRepositoryToken(InventoryMovement), useValue: movementRepo },
+        { provide: getRepositoryToken(StoreVariantStock), useValue: emptyRepo },
+        { provide: getRepositoryToken(StockBalance), useValue: emptyRepo },
+        { provide: getRepositoryToken(Store), useValue: emptyRepo },
+        { provide: getRepositoryToken(ProductVariant), useValue: emptyRepo },
+        { provide: getRepositoryToken(StoreProductPrice), useValue: emptyRepo },
+        { provide: getRepositoryToken(Supplier), useValue: emptyRepo },
+        { provide: getRepositoryToken(SerialNumber), useValue: emptyRepo },
+        { provide: getRepositoryToken(Location), useValue: locationRepo },
+        { provide: AppContextService, useValue: appContext },
+        { provide: DataSource, useValue: {} },
+      ],
+    }).compile();
+
+    service = module.get(InventoryService);
+  });
+
+  it('movement history responseunda location, warehouse ve reason alanlarini enrich eder', async () => {
+    const result = await service.getMovementHistory({
+      offset: 0,
+      limit: 50,
+    } as any);
+
+    expect(locationRepo.find).toHaveBeenCalledWith({
+      where: {
+        id: expect.anything(),
+        tenant: { id: TENANT_ID },
+      },
+    });
+    expect(result).toEqual({
+      data: [
+        expect.objectContaining({
+          id: 'movement-1',
+          productId: 'product-1',
+          productName: 'Tisort',
+          locationId: 'location-1',
+          locationName: 'A Blok Raf 1',
+          warehouseId: 'warehouse-1',
+          warehouseName: 'Ana Depo',
+          reason: 'Sayim fazlasi',
+        }),
+        expect.objectContaining({
+          id: 'movement-2',
+          productId: 'product-1',
+          productName: 'Tisort',
+          locationName: null,
+          warehouseId: null,
+          warehouseName: null,
+          reason: null,
+        }),
+      ],
+      meta: {
+        total: 2,
+        limit: 50,
+        offset: 0,
+        hasMore: false,
+      },
+    });
+  });
+
+  it('movement history querysinde warehouseId, type ve search filtrelerini uygular', async () => {
+    await service.getMovementHistory({
+      warehouseId: 'warehouse-1',
+      type: MovementType.IN,
+      search: 'Ana Depo',
+      offset: 0,
+      limit: 50,
+    } as any);
+
+    const qbMock = movementRepo.createQueryBuilder.mock.results[0].value;
+
+    expect(qbMock.andWhere).toHaveBeenCalledWith(
+      'locationFilter.warehouseId = :warehouseId',
+      { warehouseId: 'warehouse-1' },
+    );
+    expect(qbMock.andWhere).toHaveBeenCalledWith('m.type = :type', {
+      type: MovementType.IN,
+    });
+    expect(
+      qbMock.andWhere.mock.calls.some(([clause]) => typeof clause === 'object'),
+    ).toBe(true);
   });
 });

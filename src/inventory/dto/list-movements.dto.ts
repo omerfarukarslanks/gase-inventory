@@ -5,8 +5,10 @@ import {
   IsEnum,
   IsInt,
   IsOptional,
+  IsString,
   IsUUID,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { InventoryMovement, MovementType } from '../inventory-movement.entity';
@@ -22,6 +24,11 @@ export class ListMovementsQueryDto {
   @IsUUID('4')
   productVariantId?: string;
 
+  @ApiPropertyOptional({ description: 'Depo ID filtresi (lokasyon bagli hareketler icin)' })
+  @IsOptional()
+  @IsUUID('4')
+  warehouseId?: string;
+
   @ApiPropertyOptional({ enum: MovementType, description: 'Hareket tipi filtresi' })
   @IsOptional()
   @IsEnum(MovementType)
@@ -36,6 +43,12 @@ export class ListMovementsQueryDto {
   @IsOptional()
   @IsDateString()
   endDate?: string;
+
+  @ApiPropertyOptional({ description: 'Magaza, urun, lokasyon veya meta aramasi' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 
   @ApiPropertyOptional({ default: 0 })
   @IsOptional()
@@ -54,7 +67,7 @@ export class ListMovementsQueryDto {
 }
 
 export interface PaginatedMovementsResponse {
-  data: InventoryMovement[];
+  data: InventoryMovementHistoryItemResponse[];
   meta: {
     total: number;
     limit: number;
@@ -62,3 +75,12 @@ export interface PaginatedMovementsResponse {
     hasMore: boolean;
   };
 }
+
+export type InventoryMovementHistoryItemResponse = InventoryMovement & {
+  productId: string | null;
+  productName: string | null;
+  locationName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  reason: string | null;
+};

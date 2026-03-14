@@ -10,6 +10,8 @@ import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { Supplier } from 'src/supplier/supplier.entity';
 import { StockBalance } from './stock-balance.entity';
 import { SerialNumber } from './serial-number.entity';
+import { Location } from 'src/warehouse/entities/location.entity';
+import { Warehouse } from 'src/warehouse/entities/warehouse.entity';
 
 @Module({
   imports: [
@@ -22,6 +24,8 @@ import { SerialNumber } from './serial-number.entity';
       Supplier,
       StockBalance,
       SerialNumber,
+      Location,
+      Warehouse,
     ]),
   ],
   providers: [InventoryService],

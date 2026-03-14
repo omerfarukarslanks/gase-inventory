@@ -5,7 +5,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
+import { Brackets, EntityManager, In, Repository, SelectQueryBuilder } from 'typeorm';
 
 import { InventoryMovement, MovementType } from './inventory-movement.entity';
 import { ReceiveStockDto, ReceiveStockItemDto } from './dto/receive-stock.dto';
@@ -19,13 +19,18 @@ import { InventoryErrors } from 'src/common/errors/inventory.errors';
 import { StoreVariantStock } from './store-variant-stock.entity';
 import { StockBalance } from './stock-balance.entity';
 import { Tenant } from 'src/tenant/tenant.entity';
-import { ListMovementsQueryDto, PaginatedMovementsResponse } from './dto/list-movements.dto';
+import {
+  InventoryMovementHistoryItemResponse,
+  ListMovementsQueryDto,
+  PaginatedMovementsResponse,
+} from './dto/list-movements.dto';
 import { LowStockQueryDto } from './dto/low-stock-query.dto';
 import { StoreProductPrice } from 'src/pricing/store-product-price.entity';
 import { OptionalPaginationQueryDto } from './dto/optional-pagination.dto';
 import { StockSummaryDto } from './dto/stock-summary.dto';
 import { calculateLineAmounts } from 'src/pricing/utils/price-calculator';
 import { Supplier } from 'src/supplier/supplier.entity';
+import { Location } from 'src/warehouse/entities/location.entity';
 
 @Injectable()
 export class InventoryService {
@@ -46,6 +51,8 @@ export class InventoryService {
     private readonly supplierRepo: Repository<Supplier>,
     @InjectRepository(StockBalance)
     private readonly stockBalanceRepo: Repository<StockBalance>,
+    @InjectRepository(Location)
+    private readonly locationRepo: Repository<Location>,
     private readonly appContext: AppContextService,
   ) {}
 
@@ -80,6 +87,10 @@ export class InventoryService {
 
   private getVariantRepo(manager?: EntityManager): Repository<ProductVariant> {
     return manager ? manager.getRepository(ProductVariant) : this.variantRepo;
+  }
+
+  private getLocationRepo(manager?: EntityManager): Repository<Location> {
+    return manager ? manager.getRepository(Location) : this.locationRepo;
   }
 
   private async getTenantStoreOrThrow(storeId: string, manager?: EntityManager): Promise<Store> {
@@ -1685,6 +1696,13 @@ export class InventoryService {
       .createQueryBuilder('m')
       .leftJoinAndSelect('m.store', 'store')
       .leftJoinAndSelect('m.productVariant', 'variant')
+      .leftJoinAndSelect('variant.product', 'product')
+      .leftJoin(
+        Location,
+        'locationFilter',
+        'locationFilter.id = m.locationId AND locationFilter.tenantId = :tenantId',
+        { tenantId },
+      )
       .where('m.tenantId = :tenantId', { tenantId })
       .orderBy('m.createdAt', 'DESC')
       .skip(query.offset)
@@ -1696,6 +1714,12 @@ export class InventoryService {
 
     if (query.productVariantId) {
       qb.andWhere('m.productVariantId = :variantId', { variantId: query.productVariantId });
+    }
+
+    if (query.warehouseId) {
+      qb.andWhere('locationFilter.warehouseId = :warehouseId', {
+        warehouseId: query.warehouseId,
+      });
     }
 
     if (query.type) {
@@ -1710,10 +1734,27 @@ export class InventoryService {
       qb.andWhere('m.createdAt <= :endDate', { endDate: new Date(query.endDate) });
     }
 
+    if (query.search?.trim()) {
+      const search = `%${query.search.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('store.name ILIKE :search', { search })
+            .orWhere('variant.name ILIKE :search', { search })
+            .orWhere('variant.code ILIKE :search', { search })
+            .orWhere('product.name ILIKE :search', { search })
+            .orWhere('locationFilter.name ILIKE :search', { search })
+            .orWhere('locationFilter.code ILIKE :search', { search })
+            .orWhere('CAST(m.meta AS text) ILIKE :search', { search });
+        }),
+      );
+    }
+
     const [data, total] = await qb.getManyAndCount();
+    const enrichedData = await this.enrichMovementHistory(data, tenantId, manager);
 
     return {
-      data,
+      data: enrichedData,
       meta: {
         total,
         limit: query.limit,
@@ -1721,6 +1762,58 @@ export class InventoryService {
         hasMore: query.offset + data.length < total,
       },
     };
+  }
+
+  private async enrichMovementHistory(
+    movements: InventoryMovement[],
+    tenantId: string,
+    manager?: EntityManager,
+  ): Promise<InventoryMovementHistoryItemResponse[]> {
+    if (movements.length === 0) {
+      return [];
+    }
+
+    const locationIds = Array.from(
+      new Set(
+        movements
+          .map((movement) => movement.locationId)
+          .filter((locationId): locationId is string => Boolean(locationId)),
+      ),
+    );
+
+    const locationById = new Map<string, Location>();
+
+    if (locationIds.length > 0) {
+      const locations = await this.getLocationRepo(manager).find({
+        where: {
+          id: In(locationIds),
+          tenant: { id: tenantId },
+        },
+      });
+
+      for (const location of locations) {
+        locationById.set(location.id, location);
+      }
+    }
+
+    return movements.map((movement) => {
+      const location = movement.locationId
+        ? locationById.get(movement.locationId)
+        : undefined;
+
+      return {
+        ...movement,
+        productId: movement.productVariant?.product?.id ?? null,
+        productName: movement.productVariant?.product?.name ?? null,
+        locationName: location ? (location.name ?? location.code) : null,
+        warehouseId: location?.warehouse?.id ?? null,
+        warehouseName: location?.warehouse?.name ?? null,
+        reason:
+          typeof movement.meta?.reason === 'string'
+            ? movement.meta.reason
+            : null,
+      };
+    });
   }
 
   // ---- Düşük stok uyarıları ----
