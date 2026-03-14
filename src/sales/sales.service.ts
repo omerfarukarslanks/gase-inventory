@@ -39,6 +39,12 @@ import {
   SaleReturnDetailResponse,
   SaleReturnListItemResponse,
 } from './dto/list-sale-returns.dto';
+import {
+  ListSalePaymentsDto,
+  PaginatedSalePaymentsResponse,
+  SalePaymentDetailResponse,
+  SalePaymentListItemResponse,
+} from './dto/list-sale-payments.dto';
 import { CancelSaleDto } from './dto/cancel-sale.dto';
 import { ProductPackageService } from 'src/product-package/product-package.service';
 import { ProductPackage } from 'src/product-package/product-package.entity';
@@ -1206,6 +1212,105 @@ export class SalesService {
     });
   }
 
+  async listAllSalePayments(
+    query: ListSalePaymentsDto,
+  ): Promise<PaginatedSalePaymentsResponse> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const scope = await resolveStoreScope(
+      this.appContext,
+      this.storeRepo,
+      query.storeId ? [query.storeId] : undefined,
+    );
+
+    const qb = this.salePaymentRepo
+      .createQueryBuilder('salePayment')
+      .leftJoinAndSelect('salePayment.sale', 'sale')
+      .leftJoinAndSelect('sale.store', 'store')
+      .leftJoinAndSelect('sale.customer', 'customer')
+      .where('sale.tenantId = :tenantId', { tenantId });
+
+    applyScopeToQb(qb, scope, 'sale');
+
+    qb.andWhere('salePayment.status = :status', {
+      status: query.status ?? SalePaymentStatus.ACTIVE,
+    });
+
+    if (query.paymentMethod) {
+      qb.andWhere('salePayment.paymentMethod = :paymentMethod', {
+        paymentMethod: query.paymentMethod,
+      });
+    }
+
+    if (query.startDate) {
+      qb.andWhere('DATE(salePayment.paidAt) >= :startDate', {
+        startDate: query.startDate,
+      });
+    }
+
+    if (query.endDate) {
+      qb.andWhere('DATE(salePayment.paidAt) <= :endDate', {
+        endDate: query.endDate,
+      });
+    }
+
+    if (query.q?.trim()) {
+      const searchTerm = query.q.trim();
+      const search = `%${searchTerm}%`;
+      const paymentReferenceSearch = `%${this.normalizeReferenceSearch(searchTerm, 'PAY')}%`;
+      const saleReferenceSearch = `%${this.normalizeReferenceSearch(searchTerm, 'SALE')}%`;
+
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('salePayment.note ILIKE :search', { search })
+            .orWhere('CAST(salePayment.id AS text) ILIKE :search', { search })
+            .orWhere('sale.receiptNo ILIKE :search', { search })
+            .orWhere('CAST(sale.id AS text) ILIKE :search', { search })
+            .orWhere('customer.name ILIKE :search', { search })
+            .orWhere('customer.surname ILIKE :search', { search })
+            .orWhere(
+              `UPPER(LEFT(REPLACE(CAST(salePayment.id AS text), '-', ''), 8)) LIKE :paymentReferenceSearch`,
+              { paymentReferenceSearch },
+            )
+            .orWhere(
+              `UPPER(LEFT(REPLACE(CAST(sale.id AS text), '-', ''), 8)) LIKE :saleReferenceSearch`,
+              { saleReferenceSearch },
+            );
+        }),
+      );
+    }
+
+    qb.orderBy('salePayment.paidAt', 'DESC')
+      .addOrderBy('salePayment.createdAt', 'DESC');
+
+    if (!query.hasPagination) {
+      const data = (await qb.getMany()).map((payment) =>
+        this.mapSalePaymentListItem(payment),
+      );
+      return { data };
+    }
+
+    const total = await qb.getCount();
+    const data = (await qb.skip(query.skip).take(query.limit ?? 20).getMany()).map(
+      (payment) => this.mapSalePaymentListItem(payment),
+    );
+
+    return {
+      data,
+      meta: {
+        total,
+        page: query.page ?? 1,
+        limit: query.limit ?? 20,
+        totalPages: Math.ceil(total / (query.limit ?? 20)),
+      },
+    };
+  }
+
+  async getSalePayment(id: string): Promise<SalePaymentDetailResponse> {
+    const salePayment = await this.findSalePaymentOrThrow(id);
+    return this.mapSalePaymentDetail(salePayment);
+  }
+
   async addPayment(
     saleId: string,
     dto: AddPaymentDto,
@@ -2006,12 +2111,98 @@ export class SalesService {
     return saleReturn;
   }
 
+  private async findSalePaymentOrThrow(id: string): Promise<SalePayment> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const contextStoreId = this.appContext.getStoreId();
+
+    const salePayment = await this.salePaymentRepo.findOne({
+      where: {
+        id,
+        sale: {
+          tenant: { id: tenantId },
+          ...(contextStoreId ? { store: { id: contextStoreId } } : {}),
+        },
+      },
+      relations: [
+        'sale',
+        'sale.store',
+        'sale.customer',
+      ],
+    });
+
+    if (!salePayment) {
+      throw new NotFoundException('Odeme kaydi bulunamadi.');
+    }
+
+    return salePayment;
+  }
+
   private buildSaleReference(sale: Pick<Sale, 'id' | 'receiptNo'>): string {
     if (sale.receiptNo?.trim()) {
       return sale.receiptNo;
     }
 
     return `SALE-${sale.id.slice(0, 8).toUpperCase()}`;
+  }
+
+  private buildPaymentReference(payment: Pick<SalePayment, 'id'>): string {
+    return `PAY-${payment.id.replace(/-/g, '').slice(0, 8).toUpperCase()}`;
+  }
+
+  private normalizeReferenceSearch(value: string, prefix: 'PAY' | 'SALE'): string {
+    return value
+      .trim()
+      .toUpperCase()
+      .replace(new RegExp(`^${prefix}-?`), '')
+      .replace(/[^A-Z0-9]/g, '');
+  }
+
+  private buildCustomerName(customer?: Pick<Customer, 'name' | 'surname'> | null): string | null {
+    if (!customer) {
+      return null;
+    }
+
+    const fullName = [customer.name, customer.surname]
+      .map((part) => part?.trim())
+      .filter((part): part is string => Boolean(part))
+      .join(' ')
+      .trim();
+
+    return fullName || null;
+  }
+
+  private mapSalePaymentListItem(
+    salePayment: SalePayment,
+  ): SalePaymentListItemResponse {
+    return {
+      id: salePayment.id,
+      paymentReference: this.buildPaymentReference(salePayment),
+      saleId: salePayment.sale.id,
+      saleReference: this.buildSaleReference(salePayment.sale),
+      customerName: this.buildCustomerName(salePayment.sale.customer),
+      store: {
+        id: salePayment.sale.store.id,
+        name: salePayment.sale.store.name ?? null,
+      },
+      paymentMethod: salePayment.paymentMethod,
+      amount: String(this.toSafeNumber(salePayment.amount)),
+      currency: salePayment.currency ?? null,
+      paidAt: salePayment.paidAt,
+      status: salePayment.status,
+      note: salePayment.note ?? null,
+    };
+  }
+
+  private mapSalePaymentDetail(
+    salePayment: SalePayment,
+  ): SalePaymentDetailResponse {
+    return {
+      ...this.mapSalePaymentListItem(salePayment),
+      exchangeRate: String(this.toSafeNumber(salePayment.exchangeRate)),
+      amountInBaseCurrency: String(this.toSafeNumber(salePayment.amountInBaseCurrency)),
+      cancelledAt: salePayment.cancelledAt ?? null,
+      cancelledById: salePayment.cancelledById ?? null,
+    };
   }
 
   private mapSaleReturnListItem(

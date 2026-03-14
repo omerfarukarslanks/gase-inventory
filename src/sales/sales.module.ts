@@ -16,6 +16,7 @@ import { ExchangeRateModule } from 'src/exchange-rate/exchange-rate.module';
 import { ProductPackageModule } from 'src/product-package/product-package.module';
 import { SaleReceiptService } from './sale-receipt.service';
 import { SalesReturnCenterController } from './sales-return-center.controller';
+import { SalesPaymentCenterController } from './sales-payment-center.controller';
 
 @Module({
   imports: [
@@ -29,7 +30,7 @@ import { SalesReturnCenterController } from './sales-return-center.controller';
     ProductPackageModule,
   ],
   providers: [SalesService, SaleReceiptService],
-  controllers: [SalesReturnCenterController, SalesController],
+  controllers: [SalesReturnCenterController, SalesPaymentCenterController, SalesController],
   exports: [SalesService],
 })
 export class SalesModule {}

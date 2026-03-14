@@ -10,7 +10,7 @@ import { ProductPackageService } from 'src/product-package/product-package.servi
 import { SalesService } from './sales.service';
 import { Sale } from './sale.entity';
 import { SaleLine } from './sale-line.entity';
-import { SalePayment } from './sale-payment.entity';
+import { PaymentMethod, SalePayment, SalePaymentStatus } from './sale-payment.entity';
 import { SaleReturn } from './sale-return.entity';
 import { SaleReturnLine } from './sale-return-line.entity';
 import { Store } from 'src/store/store.entity';
@@ -34,6 +34,10 @@ describe('SalesService', () => {
     createQueryBuilder: jest.Mock;
     findOne: jest.Mock;
   };
+  let salePaymentRepo: {
+    createQueryBuilder: jest.Mock;
+    findOne: jest.Mock;
+  };
   let storeRepo: {
     find: jest.Mock;
     findOne: jest.Mock;
@@ -54,6 +58,10 @@ describe('SalesService', () => {
       createQueryBuilder: jest.fn(),
       findOne: jest.fn(),
     };
+    salePaymentRepo = {
+      createQueryBuilder: jest.fn(),
+      findOne: jest.fn(),
+    };
     storeRepo = {
       find: jest.fn(),
       findOne: jest.fn(),
@@ -69,7 +77,7 @@ describe('SalesService', () => {
         { provide: getRepositoryToken(SaleLine), useValue: {} },
         { provide: getRepositoryToken(Store), useValue: storeRepo },
         { provide: getRepositoryToken(ProductVariant), useValue: variantRepo },
-        { provide: getRepositoryToken(SalePayment), useValue: {} },
+        { provide: getRepositoryToken(SalePayment), useValue: salePaymentRepo },
         { provide: getRepositoryToken(SaleReturn), useValue: saleReturnRepo },
         { provide: getRepositoryToken(SaleReturnLine), useValue: {} },
         { provide: AppContextService, useValue: appContext },
@@ -308,6 +316,153 @@ describe('SalesService', () => {
             id: RETURN_ID,
             tenant: { id: TENANT_ID },
             store: { id: STORE_ID },
+          }),
+        }),
+      );
+    });
+  });
+
+  describe('central sale payment endpoints', () => {
+    it('listAllSalePayments responseunda merkezi liste alanlarini doner ve varsayilan ACTIVE filtresini kullanir', async () => {
+      const qb = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        addOrderBy: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(1),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'payment-uuid-1',
+            amount: 150,
+            paymentMethod: PaymentMethod.CARD,
+            note: 'POS tahsilati',
+            paidAt: new Date('2026-03-14T10:00:00.000Z'),
+            status: SalePaymentStatus.ACTIVE,
+            currency: 'TRY',
+            sale: {
+              id: SALE_ID,
+              receiptNo: 'SF-20260314-0001',
+              customer: {
+                name: 'Ada',
+                surname: 'Yilmaz',
+              },
+              store: {
+                id: STORE_ID,
+                name: 'Merkez Magaza',
+              },
+            },
+          },
+        ]),
+      };
+      salePaymentRepo.createQueryBuilder.mockReturnValue(qb);
+
+      const result = await service.listAllSalePayments({
+        page: 1,
+        limit: 10,
+        hasPagination: true,
+        skip: 0,
+      } as any);
+
+      expect(qb.andWhere).toHaveBeenCalledWith('salePayment.status = :status', {
+        status: SalePaymentStatus.ACTIVE,
+      });
+      expect(result).toEqual({
+        data: [
+          {
+            id: 'payment-uuid-1',
+            paymentReference: 'PAY-PAYMENTU',
+            saleId: SALE_ID,
+            saleReference: 'SF-20260314-0001',
+            customerName: 'Ada Yilmaz',
+            store: {
+              id: STORE_ID,
+              name: 'Merkez Magaza',
+            },
+            paymentMethod: PaymentMethod.CARD,
+            amount: '150',
+            currency: 'TRY',
+            paidAt: new Date('2026-03-14T10:00:00.000Z'),
+            status: SalePaymentStatus.ACTIVE,
+            note: 'POS tahsilati',
+          },
+        ],
+        meta: {
+          total: 1,
+          page: 1,
+          limit: 10,
+          totalPages: 1,
+        },
+      });
+    });
+
+    it('getSalePayment responseunda merkezi detay alanlarini doner', async () => {
+      salePaymentRepo.findOne.mockResolvedValue({
+        id: 'payment-uuid-1',
+        amount: 150,
+        paymentMethod: PaymentMethod.CARD,
+        note: 'POS tahsilati',
+        paidAt: new Date('2026-03-14T10:00:00.000Z'),
+        status: SalePaymentStatus.UPDATED,
+        currency: 'USD',
+        exchangeRate: 38.5,
+        amountInBaseCurrency: 5775,
+        cancelledAt: new Date('2026-03-14T11:00:00.000Z'),
+        cancelledById: 'user-1',
+        sale: {
+          id: SALE_ID,
+          receiptNo: null,
+          customer: {
+            name: 'Ada',
+            surname: 'Yilmaz',
+          },
+          store: {
+            id: STORE_ID,
+            name: 'Merkez Magaza',
+          },
+        },
+      });
+
+      const result = await service.getSalePayment('payment-uuid-1');
+
+      expect(result).toEqual({
+        id: 'payment-uuid-1',
+        paymentReference: 'PAY-PAYMENTU',
+        saleId: SALE_ID,
+        saleReference: 'SALE-SALE-UUI',
+        customerName: 'Ada Yilmaz',
+        store: {
+          id: STORE_ID,
+          name: 'Merkez Magaza',
+        },
+        paymentMethod: PaymentMethod.CARD,
+        amount: '150',
+        currency: 'USD',
+        paidAt: new Date('2026-03-14T10:00:00.000Z'),
+        status: SalePaymentStatus.UPDATED,
+        note: 'POS tahsilati',
+        exchangeRate: '38.5',
+        amountInBaseCurrency: '5775',
+        cancelledAt: new Date('2026-03-14T11:00:00.000Z'),
+        cancelledById: 'user-1',
+      });
+    });
+
+    it('getSalePayment aktif store scope ile kaydi sinirlar', async () => {
+      appContext.getStoreId.mockReturnValue(STORE_ID);
+      salePaymentRepo.findOne.mockResolvedValue(null);
+
+      await expect(service.getSalePayment('payment-uuid-1')).rejects.toThrow(NotFoundException);
+      expect(salePaymentRepo.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            id: 'payment-uuid-1',
+            sale: expect.objectContaining({
+              tenant: { id: TENANT_ID },
+              store: { id: STORE_ID },
+            }),
           }),
         }),
       );
