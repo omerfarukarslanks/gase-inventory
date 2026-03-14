@@ -12,6 +12,7 @@ import { InventoryService } from 'src/inventory/inventory.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { OutboxService } from 'src/outbox/outbox.service';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { Store } from 'src/store/store.entity';
 import { Warehouse } from 'src/warehouse/entities/warehouse.entity';
 
 const TENANT_ID = 'tenant-uuid-1111';
@@ -45,8 +46,10 @@ describe('ProcurementService', () => {
   let inventoryService: jest.Mocked<InventoryService>;
   let outbox: jest.Mocked<OutboxService>;
   let purchaseOrderRepo: { findOne: jest.Mock };
-  let goodsReceiptRepo: { find: jest.Mock };
+  let goodsReceiptRepo: { createQueryBuilder: jest.Mock; find: jest.Mock; findOne: jest.Mock };
   let productVariantRepo: { find: jest.Mock };
+  let storeRepo: { find: jest.Mock; findOne: jest.Mock };
+  let warehouseRepo: { find: jest.Mock };
   let manager: any;
 
   beforeEach(async () => {
@@ -62,13 +65,20 @@ describe('ProcurementService', () => {
     appContext  = {
       getTenantIdOrThrow: jest.fn().mockReturnValue(TENANT_ID),
       getUserIdOrNull: jest.fn().mockReturnValue(USER_ID),
+      getStoreId: jest.fn().mockReturnValue(undefined),
     } as any;
     auditLog = { log: jest.fn().mockResolvedValue(undefined) } as any;
     inventoryService = { receiveStock: jest.fn().mockResolvedValue({}) } as any;
     outbox = { publish: jest.fn().mockResolvedValue({}) } as any;
     purchaseOrderRepo = { findOne: jest.fn() };
-    goodsReceiptRepo = { find: jest.fn() };
+    goodsReceiptRepo = {
+      createQueryBuilder: jest.fn(),
+      find: jest.fn(),
+      findOne: jest.fn(),
+    };
     productVariantRepo = { find: jest.fn().mockResolvedValue([]) };
+    storeRepo = { find: jest.fn(), findOne: jest.fn() };
+    warehouseRepo = { find: jest.fn() };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -78,6 +88,8 @@ describe('ProcurementService', () => {
         { provide: getRepositoryToken(GoodsReceipt),      useValue: goodsReceiptRepo },
         { provide: getRepositoryToken(GoodsReceiptLine),  useValue: {} },
         { provide: getRepositoryToken(ProductVariant),    useValue: productVariantRepo },
+        { provide: getRepositoryToken(Store),             useValue: storeRepo },
+        { provide: getRepositoryToken(Warehouse),         useValue: warehouseRepo },
         { provide: AppContextService,  useValue: appContext },
         { provide: InventoryService,   useValue: inventoryService },
         { provide: DataSource,         useValue: dataSource },
@@ -411,6 +423,132 @@ describe('ProcurementService', () => {
         expect.objectContaining({
           productName: 'Tisort',
           variantName: 'Kirmizi / M',
+        }),
+      );
+    });
+  });
+
+  // ── central goods receipt endpoints ──────────────────────────────────────
+
+  describe('central goods receipt endpoints', () => {
+    it('listAllGoodsReceipts responseunda merkezi liste alanlarini doner', async () => {
+      const qb = {
+        leftJoinAndSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        orderBy: jest.fn().mockReturnThis(),
+        getCount: jest.fn().mockResolvedValue(1),
+        skip: jest.fn().mockReturnThis(),
+        take: jest.fn().mockReturnThis(),
+        getMany: jest.fn().mockResolvedValue([
+          {
+            id: 'gr-uuid-6666',
+            purchaseOrder: { id: PO_ID },
+            warehouseId: WAREHOUSE_ID,
+            receivedAt: new Date('2026-03-14T09:00:00.000Z'),
+            notes: 'Merkezi liste kaydi',
+            store: { id: STORE_ID, name: 'Merkez Magaza' },
+          },
+        ]),
+      };
+      goodsReceiptRepo.createQueryBuilder.mockReturnValue(qb);
+      goodsReceiptRepo.find.mockResolvedValue([
+        {
+          id: 'gr-uuid-6666',
+          lines: [
+            { receivedQuantity: 40 },
+            { receivedQuantity: 60 },
+          ],
+        },
+      ]);
+      storeRepo.find.mockResolvedValue([{ id: STORE_ID }]);
+      warehouseRepo.find.mockResolvedValue([{ id: WAREHOUSE_ID, name: 'Ana Depo' }]);
+
+      const result = await service.listAllGoodsReceipts({
+        page: 1,
+        limit: 10,
+        storeId: STORE_ID,
+        hasPagination: true,
+        skip: 0,
+      } as any);
+
+      expect(result).toEqual({
+        data: [
+          expect.objectContaining({
+            id: 'gr-uuid-6666',
+            purchaseOrderId: PO_ID,
+            purchaseOrderReference: 'PO-PO-UUID-',
+            warehouseId: WAREHOUSE_ID,
+            warehouseName: 'Ana Depo',
+            lineCount: 2,
+            totalReceivedQuantity: 100,
+            store: {
+              id: STORE_ID,
+              name: 'Merkez Magaza',
+            },
+          }),
+        ],
+        meta: {
+          total: 1,
+          page: 1,
+          limit: 10,
+          totalPages: 1,
+        },
+      });
+    });
+
+    it('getGoodsReceipt responseunda purchaseOrderId, warehouseName ve line detaylari doner', async () => {
+      goodsReceiptRepo.findOne.mockResolvedValue({
+        id: 'gr-uuid-6666',
+        purchaseOrder: { id: PO_ID },
+        warehouseId: WAREHOUSE_ID,
+        receivedAt: new Date('2026-03-14T09:00:00.000Z'),
+        notes: 'Detay kaydi',
+        store: { id: STORE_ID, name: 'Merkez Magaza' },
+        lines: [
+          {
+            id: 'receipt-line-1',
+            receivedQuantity: 100,
+            lotNumber: 'LOT-001',
+            expiryDate: new Date('2026-03-26'),
+            purchaseOrderLine: {
+              id: 'po-line-1',
+              productVariantId: VARIANT_ID,
+              quantity: 100,
+              receivedQuantity: 100,
+            },
+          },
+        ],
+      });
+      warehouseRepo.find.mockResolvedValue([{ id: WAREHOUSE_ID, name: 'Ana Depo' }]);
+      productVariantRepo.find.mockResolvedValue([
+        {
+          id: VARIANT_ID,
+          name: 'Kirmizi / M',
+          product: { name: 'Tisort' },
+        },
+      ]);
+
+      const result = await service.getGoodsReceipt('gr-uuid-6666');
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          id: 'gr-uuid-6666',
+          purchaseOrderId: PO_ID,
+          purchaseOrderReference: 'PO-PO-UUID-',
+          warehouseId: WAREHOUSE_ID,
+          warehouseName: 'Ana Depo',
+          store: {
+            id: STORE_ID,
+            name: 'Merkez Magaza',
+          },
+          lines: [
+            expect.objectContaining({
+              id: 'receipt-line-1',
+              productName: 'Tisort',
+              variantName: 'Kirmizi / M',
+            }),
+          ],
         }),
       );
     });

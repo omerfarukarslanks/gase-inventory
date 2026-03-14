@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { AppContextService } from 'src/common/context/app-context.service';
 import { ProcurementService } from 'src/procurement/procurement.service';
 import { ReplenishmentRule } from './entities/replenishment-rule.entity';
@@ -14,6 +14,14 @@ import { UpdateReplenishmentRuleDto } from './dto/update-replenishment-rule.dto'
 import { ListReplenishmentRulesDto } from './dto/list-replenishment-rules.dto';
 import { ListReplenishmentSuggestionsDto } from './dto/list-replenishment-suggestions.dto';
 import { DismissSuggestionDto } from './dto/dismiss-suggestion.dto';
+import { ProductVariant } from 'src/product/product-variant.entity';
+
+type VariantDetails = {
+  productName: string | null;
+  variantName: string | null;
+};
+
+type ReplenishmentRuleResponse = ReplenishmentRule & VariantDetails;
 
 @Injectable()
 export class ReplenishmentService {
@@ -22,13 +30,15 @@ export class ReplenishmentService {
     private readonly ruleRepo: Repository<ReplenishmentRule>,
     @InjectRepository(ReplenishmentSuggestion)
     private readonly suggestionRepo: Repository<ReplenishmentSuggestion>,
+    @InjectRepository(ProductVariant)
+    private readonly productVariantRepo: Repository<ProductVariant>,
     private readonly appContext: AppContextService,
     private readonly procurementService: ProcurementService,
   ) {}
 
   // ─── Rules ──────────────────────────────────────────────────────────────────
 
-  async createRule(dto: CreateReplenishmentRuleDto): Promise<ReplenishmentRule> {
+  async createRule(dto: CreateReplenishmentRuleDto): Promise<ReplenishmentRuleResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const actorId = this.appContext.getUserIdOrNull();
 
@@ -45,7 +55,8 @@ export class ReplenishmentService {
       updatedById: actorId,
     });
 
-    return this.ruleRepo.save(rule);
+    const savedRule = await this.ruleRepo.save(rule);
+    return this.enrichRule(savedRule);
   }
 
   async listRules(query: ListReplenishmentRulesDto) {
@@ -72,11 +83,14 @@ export class ReplenishmentService {
     qb.orderBy('rule.createdAt', 'DESC');
 
     if (!query.hasPagination) {
-      return { data: await qb.getMany() };
+      const data = await this.enrichRules(await qb.getMany());
+      return { data };
     }
 
     const total = await qb.getCount();
-    const data = await qb.skip(query.skip).take(query.limit ?? 20).getMany();
+    const data = await this.enrichRules(
+      await qb.skip(query.skip).take(query.limit ?? 20).getMany(),
+    );
 
     return {
       data,
@@ -89,12 +103,15 @@ export class ReplenishmentService {
     };
   }
 
-  async getRule(ruleId: string): Promise<ReplenishmentRule> {
+  async getRule(ruleId: string): Promise<ReplenishmentRuleResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
-    return this.findRuleOrThrow(ruleId, tenantId);
+    return this.enrichRule(await this.findRuleOrThrow(ruleId, tenantId));
   }
 
-  async updateRule(ruleId: string, dto: UpdateReplenishmentRuleDto): Promise<ReplenishmentRule> {
+  async updateRule(
+    ruleId: string,
+    dto: UpdateReplenishmentRuleDto,
+  ): Promise<ReplenishmentRuleResponse> {
     const tenantId = this.appContext.getTenantIdOrThrow();
     const actorId = this.appContext.getUserIdOrNull();
 
@@ -107,7 +124,8 @@ export class ReplenishmentService {
     if (dto.isActive !== undefined) rule.isActive = dto.isActive;
     rule.updatedById = actorId;
 
-    return this.ruleRepo.save(rule);
+    const savedRule = await this.ruleRepo.save(rule);
+    return this.enrichRule(savedRule);
   }
 
   async deactivateRule(ruleId: string): Promise<void> {
@@ -218,6 +236,61 @@ export class ReplenishmentService {
   }
 
   // ─── Internal ───────────────────────────────────────────────────────────────
+
+  private async loadVariantDetailsMap(
+    variantIds: string[],
+  ): Promise<Map<string, VariantDetails>> {
+    if (variantIds.length === 0) {
+      return new Map<string, VariantDetails>();
+    }
+
+    const variants = await this.productVariantRepo.find({
+      where: { id: In(variantIds) },
+      relations: ['product'],
+    });
+
+    return new Map(
+      variants.map((variant) => [
+        variant.id,
+        {
+          productName: variant.product?.name ?? null,
+          variantName: variant.name ?? null,
+        },
+      ]),
+    );
+  }
+
+  private async enrichRules(
+    rules: ReplenishmentRule[],
+  ): Promise<ReplenishmentRuleResponse[]> {
+    if (rules.length === 0) {
+      return [];
+    }
+
+    const variantIds = [
+      ...new Set(
+        rules
+          .map((rule) => rule.productVariantId)
+          .filter((variantId): variantId is string => Boolean(variantId)),
+      ),
+    ];
+    const variantById = await this.loadVariantDetailsMap(variantIds);
+
+    return rules.map((rule) => {
+      const variantDetails = variantById.get(rule.productVariantId);
+
+      return {
+        ...rule,
+        productName: variantDetails?.productName ?? null,
+        variantName: variantDetails?.variantName ?? null,
+      };
+    });
+  }
+
+  private async enrichRule(rule: ReplenishmentRule): Promise<ReplenishmentRuleResponse> {
+    const [enrichedRule] = await this.enrichRules([rule]);
+    return enrichedRule;
+  }
 
   private async findRuleOrThrow(ruleId: string, tenantId: string): Promise<ReplenishmentRule> {
     const rule = await this.ruleRepo.findOne({

@@ -4,8 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { Brackets, DataSource, EntityManager, In, Repository } from 'typeorm';
 import { AppContextService } from 'src/common/context/app-context.service';
+import { applyScopeToQb, resolveStoreScope } from 'src/common/helpers/store-scope.helper';
 import { InventoryService } from 'src/inventory/inventory.service';
 import { AuditLogService } from 'src/audit-log/audit-log.service';
 import { OutboxService } from 'src/outbox/outbox.service';
@@ -16,8 +17,10 @@ import { GoodsReceiptLine } from './entities/goods-receipt-line.entity';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreateGoodsReceiptDto } from './dto/create-goods-receipt.dto';
 import { ListPurchaseOrdersDto } from './dto/list-purchase-orders.dto';
+import { ListGoodsReceiptsDto } from './dto/list-goods-receipts.dto';
 import { ProductVariant } from 'src/product/product-variant.entity';
 import { Warehouse } from 'src/warehouse/entities/warehouse.entity';
+import { Store } from 'src/store/store.entity';
 
 type GoodsReceiptLineResponse = GoodsReceiptLine & {
   productName: string | null;
@@ -30,6 +33,37 @@ type PurchaseOrderLineResponse = PurchaseOrderLine & {
 };
 
 type GoodsReceiptResponse = Omit<GoodsReceipt, 'lines'> & {
+  lines: GoodsReceiptLineResponse[];
+};
+
+type GoodsReceiptListItemResponse = {
+  id: string;
+  purchaseOrderId: string;
+  purchaseOrderReference: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  receivedAt: Date;
+  notes: string | null;
+  lineCount: number;
+  totalReceivedQuantity: number;
+  store: {
+    id: string;
+    name: string | null;
+  };
+};
+
+type GoodsReceiptDetailResponse = {
+  id: string;
+  purchaseOrderId: string;
+  purchaseOrderReference: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  receivedAt: Date;
+  notes: string | null;
+  store: {
+    id: string;
+    name: string | null;
+  };
   lines: GoodsReceiptLineResponse[];
 };
 
@@ -55,6 +89,10 @@ export class ProcurementService {
     private readonly grLineRepo: Repository<GoodsReceiptLine>,
     @InjectRepository(ProductVariant)
     private readonly productVariantRepo: Repository<ProductVariant>,
+    @InjectRepository(Store)
+    private readonly storeRepo: Repository<Store>,
+    @InjectRepository(Warehouse)
+    private readonly warehouseRepo: Repository<Warehouse>,
     private readonly appContext: AppContextService,
     private readonly inventoryService: InventoryService,
     private readonly dataSource: DataSource,
@@ -393,6 +431,76 @@ export class ProcurementService {
     return this.enrichGoodsReceipts(receipts);
   }
 
+  async listAllGoodsReceipts(query: ListGoodsReceiptsDto) {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const scope = await resolveStoreScope(
+      this.appContext,
+      this.storeRepo,
+      query.storeId ? [query.storeId] : undefined,
+    );
+
+    const qb = this.grRepo
+      .createQueryBuilder('gr')
+      .leftJoinAndSelect('gr.store', 'store')
+      .leftJoinAndSelect('gr.purchaseOrder', 'purchaseOrder')
+      .where('gr.tenantId = :tenantId', { tenantId });
+
+    applyScopeToQb(qb, scope, 'gr');
+
+    if (query.warehouseId) {
+      qb.andWhere('gr.warehouseId = :warehouseId', { warehouseId: query.warehouseId });
+    }
+    if (query.startDate) {
+      qb.andWhere('DATE(gr.receivedAt) >= :startDate', { startDate: query.startDate });
+    }
+    if (query.endDate) {
+      qb.andWhere('DATE(gr.receivedAt) <= :endDate', { endDate: query.endDate });
+    }
+    if (query.q?.trim()) {
+      const search = `%${query.q.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('gr.notes ILIKE :search', { search })
+            .orWhere('CAST(purchaseOrder.id AS text) ILIKE :search', { search })
+            .orWhere(
+              "CONCAT('PO-', UPPER(SUBSTRING(CAST(purchaseOrder.id AS text), 1, 8))) ILIKE :search",
+              { search },
+            );
+        }),
+      );
+    }
+
+    qb.orderBy('gr.receivedAt', 'DESC');
+
+    if (!query.hasPagination) {
+      const data = await this.enrichGoodsReceiptListItems(await qb.getMany(), tenantId);
+      return { data };
+    }
+
+    const total = await qb.getCount();
+    const data = await this.enrichGoodsReceiptListItems(
+      await qb.skip(query.skip).take(query.limit ?? 20).getMany(),
+      tenantId,
+    );
+
+    return {
+      data,
+      meta: {
+        total,
+        page: query.page ?? 1,
+        limit: query.limit ?? 20,
+        totalPages: Math.ceil(total / (query.limit ?? 20)),
+      },
+    };
+  }
+
+  async getGoodsReceipt(goodsReceiptId: string): Promise<GoodsReceiptDetailResponse> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const receipt = await this.findGoodsReceiptOrThrow(goodsReceiptId, tenantId);
+    return this.enrichGoodsReceiptDetail(receipt, tenantId);
+  }
+
   // ─── Internal ───────────────────────────────────────────────────────────────
 
   private async findPurchaseOrderOrThrow(
@@ -440,6 +548,27 @@ export class ProcurementService {
     return warehouse;
   }
 
+  private async findGoodsReceiptOrThrow(
+    goodsReceiptId: string,
+    tenantId: string,
+  ): Promise<GoodsReceipt> {
+    const contextStoreId = this.appContext.getStoreId();
+    const receipt = await this.grRepo.findOne({
+      where: {
+        id: goodsReceiptId,
+        tenant: { id: tenantId },
+        ...(contextStoreId ? { store: { id: contextStoreId } } : {}),
+      },
+      relations: ['purchaseOrder', 'lines', 'lines.purchaseOrderLine', 'store'],
+    });
+
+    if (!receipt) {
+      throw new NotFoundException('Teslim kaydi bulunamadi');
+    }
+
+    return receipt;
+  }
+
   private async enrichGoodsReceipt(
     receipt: GoodsReceipt,
   ): Promise<GoodsReceiptResponse> {
@@ -476,6 +605,78 @@ export class ProcurementService {
         };
       }),
     }));
+  }
+
+  private async enrichGoodsReceiptListItems(
+    receipts: GoodsReceipt[],
+    tenantId: string,
+  ): Promise<GoodsReceiptListItemResponse[]> {
+    if (receipts.length === 0) {
+      return [];
+    }
+
+    const metricsByReceiptId = await this.loadGoodsReceiptMetricsMap(
+      receipts.map((receipt) => receipt.id),
+      tenantId,
+    );
+    const warehouseNameById = await this.loadWarehouseNamesMap(
+      receipts
+        .map((receipt) => receipt.warehouseId)
+        .filter((warehouseId): warehouseId is string => Boolean(warehouseId)),
+      tenantId,
+    );
+
+    return receipts.map((receipt) => {
+      const metrics = metricsByReceiptId.get(receipt.id);
+      const purchaseOrderId = (receipt.purchaseOrder as any)?.id;
+
+      return {
+        id: receipt.id,
+        purchaseOrderId,
+        purchaseOrderReference: this.buildPurchaseOrderReference(purchaseOrderId),
+        warehouseId: receipt.warehouseId ?? null,
+        warehouseName: receipt.warehouseId
+          ? warehouseNameById.get(receipt.warehouseId) ?? null
+          : null,
+        receivedAt: receipt.receivedAt,
+        notes: receipt.notes ?? null,
+        lineCount: metrics?.lineCount ?? 0,
+        totalReceivedQuantity: metrics?.totalReceivedQuantity ?? 0,
+        store: {
+          id: (receipt.store as any)?.id,
+          name: receipt.store?.name ?? null,
+        },
+      };
+    });
+  }
+
+  private async enrichGoodsReceiptDetail(
+    receipt: GoodsReceipt,
+    tenantId: string,
+  ): Promise<GoodsReceiptDetailResponse> {
+    const enrichedReceipt = await this.enrichGoodsReceipt(receipt);
+    const warehouseNameById = await this.loadWarehouseNamesMap(
+      enrichedReceipt.warehouseId ? [enrichedReceipt.warehouseId] : [],
+      tenantId,
+    );
+    const purchaseOrderId = (receipt.purchaseOrder as any)?.id;
+
+    return {
+      id: enrichedReceipt.id,
+      purchaseOrderId,
+      purchaseOrderReference: this.buildPurchaseOrderReference(purchaseOrderId),
+      warehouseId: enrichedReceipt.warehouseId ?? null,
+      warehouseName: enrichedReceipt.warehouseId
+        ? warehouseNameById.get(enrichedReceipt.warehouseId) ?? null
+        : null,
+      receivedAt: enrichedReceipt.receivedAt,
+      notes: enrichedReceipt.notes ?? null,
+      store: {
+        id: (enrichedReceipt.store as any)?.id,
+        name: enrichedReceipt.store?.name ?? null,
+      },
+      lines: enrichedReceipt.lines,
+    };
   }
 
   private async enrichPurchaseOrder(
@@ -524,5 +725,58 @@ export class ProcurementService {
         },
       ]),
     );
+  }
+
+  private async loadWarehouseNamesMap(
+    warehouseIds: string[],
+    tenantId: string,
+  ): Promise<Map<string, string | null>> {
+    if (warehouseIds.length === 0) {
+      return new Map<string, string | null>();
+    }
+
+    const warehouses = await this.warehouseRepo.find({
+      where: { id: In([...new Set(warehouseIds)]), tenant: { id: tenantId } },
+      select: { id: true, name: true },
+    });
+
+    return new Map(warehouses.map((warehouse) => [warehouse.id, warehouse.name ?? null]));
+  }
+
+  private async loadGoodsReceiptMetricsMap(
+    receiptIds: string[],
+    tenantId: string,
+  ): Promise<Map<string, { lineCount: number; totalReceivedQuantity: number }>> {
+    if (receiptIds.length === 0) {
+      return new Map();
+    }
+
+    const receipts = await this.grRepo.find({
+      where: { id: In(receiptIds), tenant: { id: tenantId } },
+      relations: ['lines'],
+    });
+
+    return new Map(
+      receipts.map((receipt) => [
+        receipt.id,
+        {
+          lineCount: receipt.lines?.length ?? 0,
+          totalReceivedQuantity: (receipt.lines ?? []).reduce(
+            (sum, line) => sum + Number(line.receivedQuantity ?? 0),
+            0,
+          ),
+        },
+      ]),
+    );
+  }
+
+  private buildPurchaseOrderReference(
+    purchaseOrderId?: string | null,
+  ): string | null {
+    if (!purchaseOrderId) {
+      return null;
+    }
+
+    return `PO-${purchaseOrderId.slice(0, 8).toUpperCase()}`;
   }
 }

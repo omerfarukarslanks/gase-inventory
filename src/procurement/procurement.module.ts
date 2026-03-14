@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ProcurementController } from './procurement.controller';
+import { ProcurementGoodsReceiptController } from './procurement-goods-receipt.controller';
 import { ProcurementService } from './procurement.service';
 import { PurchaseOrder } from './entities/purchase-order.entity';
 import { PurchaseOrderLine } from './entities/purchase-order-line.entity';
@@ -10,6 +11,8 @@ import { InventoryModule } from 'src/inventory/inventory.module';
 import { AuditLogModule } from 'src/audit-log/audit-log.module';
 import { OutboxModule } from 'src/outbox/outbox.module';
 import { ProductVariant } from 'src/product/product-variant.entity';
+import { Store } from 'src/store/store.entity';
+import { Warehouse } from 'src/warehouse/entities/warehouse.entity';
 
 @Module({
   imports: [
@@ -19,12 +22,14 @@ import { ProductVariant } from 'src/product/product-variant.entity';
       GoodsReceipt,
       GoodsReceiptLine,
       ProductVariant,
+      Store,
+      Warehouse,
     ]),
     InventoryModule,
     AuditLogModule,
     OutboxModule,
   ],
-  controllers: [ProcurementController],
+  controllers: [ProcurementController, ProcurementGoodsReceiptController],
   providers: [ProcurementService],
   exports: [ProcurementService],
 })
