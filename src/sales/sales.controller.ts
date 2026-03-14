@@ -49,7 +49,7 @@ export class SalesController {
   @Get(':id')
   @ApiOperation({ summary: 'Satış fişini detaylarıyla getir' })
   @RequirePermission(Permissions.SALE_READ)
-  getSale(@Param('id') id: string) {
+  getSale(@Param('id', ParseUUIDPipe) id: string) {
     return this.salesService.findOne(id);
   }
 

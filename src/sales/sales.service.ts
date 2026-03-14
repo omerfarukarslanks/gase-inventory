@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { v4 as uuidv4 } from 'uuid';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { Brackets, DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { Sale, PaymentStatus, SaleStatus } from './sale.entity';
 import { SaleLine } from './sale-line.entity';
@@ -17,6 +17,7 @@ import { SupportedCurrency } from 'src/common/constants/currency.constants';
 import { CreateSaleDto } from './dto/create-sale.dto';
 import { UpdateSaleDto } from './dto/update-sale.dto';
 import { AppContextService } from '../common/context/app-context.service';
+import { applyScopeToQb, resolveStoreScope } from 'src/common/helpers/store-scope.helper';
 import { InventoryService } from '../inventory/inventory.service';
 import { SellStockDto } from '../inventory/dto/sell-stock.dto';
 import { Customer } from 'src/customer/customer.entity';
@@ -32,6 +33,12 @@ import {
   ListSalesForStoreQueryDto,
   PaginatedSalesResponse,
 } from './dto/list-sales.dto';
+import {
+  ListSaleReturnsDto,
+  PaginatedSaleReturnsResponse,
+  SaleReturnDetailResponse,
+  SaleReturnListItemResponse,
+} from './dto/list-sale-returns.dto';
 import { CancelSaleDto } from './dto/cancel-sale.dto';
 import { ProductPackageService } from 'src/product-package/product-package.service';
 import { ProductPackage } from 'src/product-package/product-package.entity';
@@ -1870,6 +1877,85 @@ export class SalesService {
     });
   }
 
+  async listAllSaleReturns(
+    query: ListSaleReturnsDto,
+  ): Promise<PaginatedSaleReturnsResponse> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const scope = await resolveStoreScope(
+      this.appContext,
+      this.storeRepo,
+      query.storeId ? [query.storeId] : undefined,
+    );
+
+    const qb = this.saleReturnRepo
+      .createQueryBuilder('saleReturn')
+      .leftJoinAndSelect('saleReturn.store', 'store')
+      .leftJoinAndSelect('saleReturn.sale', 'sale')
+      .leftJoinAndSelect('sale.customer', 'customer')
+      .where('saleReturn.tenantId = :tenantId', { tenantId })
+      .loadRelationCountAndMap('saleReturn.lineCount', 'saleReturn.lines');
+
+    applyScopeToQb(qb, scope, 'saleReturn');
+
+    if (query.startDate) {
+      qb.andWhere('DATE(saleReturn.createdAt) >= :startDate', {
+        startDate: query.startDate,
+      });
+    }
+
+    if (query.endDate) {
+      qb.andWhere('DATE(saleReturn.createdAt) <= :endDate', {
+        endDate: query.endDate,
+      });
+    }
+
+    if (query.q?.trim()) {
+      const search = `%${query.q.trim()}%`;
+      qb.andWhere(
+        new Brackets((subQb) => {
+          subQb
+            .where('saleReturn.returnNo ILIKE :search', { search })
+            .orWhere('saleReturn.notes ILIKE :search', { search })
+            .orWhere('CAST(saleReturn.id AS text) ILIKE :search', { search })
+            .orWhere('sale.receiptNo ILIKE :search', { search })
+            .orWhere('CAST(sale.id AS text) ILIKE :search', { search })
+            .orWhere('customer.name ILIKE :search', { search })
+            .orWhere('customer.surname ILIKE :search', { search });
+        }),
+      );
+    }
+
+    qb.orderBy('saleReturn.createdAt', 'DESC');
+
+    if (!query.hasPagination) {
+      const data = (await qb.getMany()).map((saleReturn) =>
+        this.mapSaleReturnListItem(saleReturn as SaleReturn & { lineCount?: number }),
+      );
+      return { data };
+    }
+
+    const total = await qb.getCount();
+    const data = (await qb.skip(query.skip).take(query.limit ?? 20).getMany()).map(
+      (saleReturn) =>
+        this.mapSaleReturnListItem(saleReturn as SaleReturn & { lineCount?: number }),
+    );
+
+    return {
+      data,
+      meta: {
+        total,
+        page: query.page ?? 1,
+        limit: query.limit ?? 20,
+        totalPages: Math.ceil(total / (query.limit ?? 20)),
+      },
+    };
+  }
+
+  async getSaleReturn(id: string): Promise<SaleReturnDetailResponse> {
+    const saleReturn = await this.findSaleReturnOrThrow(id);
+    return this.mapSaleReturnDetail(saleReturn);
+  }
+
   /**
    * Bir satışta her satır için daha önce iade edilmiş toplam miktarı döner.
    */
@@ -1889,6 +1975,151 @@ export class SalesService {
       .getRawMany<{ saleLineId: string; total: string }>();
 
     return new Map(rows.map((r) => [r.saleLineId, Number(r.total)]));
+  }
+
+  private async findSaleReturnOrThrow(id: string): Promise<SaleReturn> {
+    const tenantId = this.appContext.getTenantIdOrThrow();
+    const contextStoreId = this.appContext.getStoreId();
+
+    const saleReturn = await this.saleReturnRepo.findOne({
+      where: {
+        id,
+        tenant: { id: tenantId },
+        ...(contextStoreId ? { store: { id: contextStoreId } } : {}),
+      },
+      relations: [
+        'store',
+        'sale',
+        'sale.customer',
+        'lines',
+        'lines.saleLine',
+        'lines.saleLine.productVariant',
+        'lines.saleLine.productVariant.product',
+        'lines.saleLine.productPackage',
+      ],
+    });
+
+    if (!saleReturn) {
+      throw new NotFoundException('Iade kaydi bulunamadi.');
+    }
+
+    return saleReturn;
+  }
+
+  private buildSaleReference(sale: Pick<Sale, 'id' | 'receiptNo'>): string {
+    if (sale.receiptNo?.trim()) {
+      return sale.receiptNo;
+    }
+
+    return `SALE-${sale.id.slice(0, 8).toUpperCase()}`;
+  }
+
+  private mapSaleReturnListItem(
+    saleReturn: SaleReturn & { lineCount?: number },
+  ): SaleReturnListItemResponse {
+    return {
+      id: saleReturn.id,
+      returnNo: saleReturn.returnNo ?? null,
+      saleId: saleReturn.sale.id,
+      saleReference: this.buildSaleReference(saleReturn.sale),
+      returnedAt: saleReturn.createdAt,
+      notes: saleReturn.notes ?? null,
+      lineCount: Number(saleReturn.lineCount ?? 0),
+      totalRefundAmount: String(this.toSafeNumber(saleReturn.totalRefundAmount)),
+      store: {
+        id: saleReturn.store.id,
+        name: saleReturn.store.name ?? null,
+      },
+      customer: saleReturn.sale.customer
+        ? {
+            id: saleReturn.sale.customer.id,
+            name: saleReturn.sale.customer.name ?? null,
+            surname: saleReturn.sale.customer.surname ?? null,
+          }
+        : null,
+    };
+  }
+
+  private async mapSaleReturnDetail(
+    saleReturn: SaleReturn,
+  ): Promise<SaleReturnDetailResponse> {
+    const packageVariantIds = Array.from(
+      new Set(
+        (saleReturn.lines ?? []).flatMap((line) =>
+          (line.packageVariantReturns ?? [])
+            .map((variantReturn) => variantReturn.productVariantId)
+            .filter((variantId): variantId is string => Boolean(variantId)),
+        ),
+      ),
+    );
+
+    const packageVariantMap = new Map<
+      string,
+      { productName: string | null; variantName: string | null }
+    >();
+
+    if (packageVariantIds.length > 0) {
+      const variants = await this.variantRepo.find({
+        where: { id: In(packageVariantIds) },
+        relations: ['product'],
+      });
+
+      for (const variant of variants) {
+        packageVariantMap.set(variant.id, {
+          productName: variant.product?.name ?? null,
+          variantName: variant.name ?? null,
+        });
+      }
+    }
+
+    return {
+      id: saleReturn.id,
+      returnNo: saleReturn.returnNo ?? null,
+      saleId: saleReturn.sale.id,
+      saleReference: this.buildSaleReference(saleReturn.sale),
+      returnedAt: saleReturn.createdAt,
+      notes: saleReturn.notes ?? null,
+      totalRefundAmount: String(this.toSafeNumber(saleReturn.totalRefundAmount)),
+      store: {
+        id: saleReturn.store.id,
+        name: saleReturn.store.name ?? null,
+      },
+      customer: saleReturn.sale.customer
+        ? {
+            id: saleReturn.sale.customer.id,
+            name: saleReturn.sale.customer.name ?? null,
+            surname: saleReturn.sale.customer.surname ?? null,
+            phoneNumber: saleReturn.sale.customer.phoneNumber ?? null,
+            email: saleReturn.sale.customer.email ?? null,
+          }
+        : null,
+      lines: (saleReturn.lines ?? []).map((line) => ({
+        id: line.id,
+        saleLineId: line.saleLine.id,
+        quantity: String(this.toSafeNumber(line.quantity)),
+        refundAmount: String(this.toSafeNumber(line.refundAmount)),
+        packageVariantReturns: line.packageVariantReturns?.map((variantReturn) => {
+          const variantDetails = packageVariantMap.get(variantReturn.productVariantId);
+          return {
+            productVariantId: variantReturn.productVariantId,
+            productName: variantDetails?.productName ?? null,
+            variantName: variantDetails?.variantName ?? null,
+            quantity: variantReturn.quantity,
+          };
+        }) ?? null,
+        saleLine: {
+          id: line.saleLine.id,
+          productType: line.saleLine.productVariant ? 'VARIANT' : 'PACKAGE',
+          productId: line.saleLine.productVariant?.product?.id ?? null,
+          productName: line.saleLine.productVariant?.product?.name ?? null,
+          productVariantId: line.saleLine.productVariant?.id ?? null,
+          variantName: line.saleLine.productVariant?.name ?? null,
+          productPackageId: line.saleLine.productPackage?.id ?? null,
+          packageName: line.saleLine.productPackage?.name ?? null,
+          currency: line.saleLine.currency ?? null,
+        },
+      })),
+    };
   }
 
   // ---- Satır düzenleme (cerrahi) ----
